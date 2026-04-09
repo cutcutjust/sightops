@@ -143,6 +143,37 @@ class ComputerAgent:
             else:
                 _console.print(f"    {msg}")
 
+    def _print_plan(self, plan: ActionPlan) -> None:
+        """Print LLM observation and action plan details."""
+        # Print observation summary from notes
+        if plan.notes and plan.notes.strip():
+            # Try to extract observation part (before any step details)
+            notes = plan.notes.strip()
+            # Only print if it's not too long
+            if len(notes) > 200:
+                notes = notes[:200] + "..."
+            self._log(f"  识别: {notes}", "cyan")
+
+        # Print each planned action with details
+        if plan.steps:
+            for i, step in enumerate(plan.steps, 1):
+                detail = f"[{step.action.value}]"
+                if step.x is not None and step.y is not None:
+                    detail += f" ({int(step.x)}, {int(step.y)})"
+                if step.text:
+                    detail += f" \"{step.text[:40]}{'...' if len(step.text) > 40 else ''}\""
+                if step.keys:
+                    detail += f" +".join(step.keys)
+                if step.direction:
+                    detail += f" {step.direction}x{step.amount or 5}"
+                if step.description:
+                    desc = step.description[:60] + "..." if len(step.description) > 60 else step.description
+                    detail += f" — {desc}"
+                self._log(f"  计划 {i}: {detail}", "bold yellow")
+
+        if plan.confidence < 1.0:
+            self._log(f"  置信度: {plan.confidence:.0%}", "dim")
+
     async def run(
         self,
         task: str,
@@ -200,6 +231,9 @@ class ComputerAgent:
                 continue
 
             self._llm_failures = 0  # reset on success
+
+            # ── 输出 LLM 识别和分析计划详情 ──
+            self._print_plan(plan)
 
             # Check terminal states
             if self._has_done_action(plan):
