@@ -42,7 +42,10 @@ class DesktopXResearcher:
         # 1. 打开浏览器并导航到 X
         console.print("[cyan]打开浏览器，导航到 x.com...[/cyan]")
         try:
-            await self.agent.run("打开浏览器，导航到 x.com。如果看到登录墙或登录页面，停下来让人工登录。")
+            await self.agent.run(
+                "Open a browser and navigate to x.com. Use Cmd+Space and type Safari to open the browser, then type x.com in the address bar. If you see a login wall, stop and let the human log in.",
+                context={"target_url": "x.com", "browser": "Safari"},
+            )
         except Exception as e:
             console.print(f"[yellow]导航到 X 时遇到问题: {e}[/yellow]")
             return []
@@ -54,7 +57,7 @@ class DesktopXResearcher:
             # 用 ComputerAgent 执行搜索
             try:
                 await self.agent.run(
-                    f"在 X 上搜索 '{topic}'。找到搜索框，输入搜索词，按回车，等待搜索结果加载。",
+                    f"On X (Twitter), find the search box, type '{topic}', press Enter, and wait for search results to load.",
                     context={"search_query": topic},
                 )
             except Exception as e:
@@ -138,7 +141,7 @@ class DesktopXResearcher:
             # 用 ComputerAgent 控制滚动（模型决定滚动方式）
             try:
                 await self.agent.run(
-                    "向下滚动页面加载更多帖子。用空格键、PageDown 键，或者拖动滚动条。",
+                    "Scroll down the page to load more posts. Use Space, PageDown, or drag the scrollbar.",
                     max_cycles=3,
                 )
             except Exception:
@@ -168,7 +171,7 @@ class DesktopXResearcher:
         # 用 ComputerAgent 点开帖子
         try:
             await self.agent.run(
-                f"在搜索结果中找到 @{author} 的帖子并点击打开详情页面。",
+                f"On the X search results page, find the post by @{author} and click it to open the detail page.",
                 context={"target_author": author},
             )
         except Exception:

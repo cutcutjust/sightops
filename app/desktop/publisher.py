@@ -25,7 +25,10 @@ class DesktopXPublisher:
         # Phase 1: 打开浏览器并导航到 X
         console.print("[cyan]打开浏览器，导航到 X...[/cyan]")
         try:
-            await self.agent.run("打开浏览器，导航到 x.com。确保已登录。")
+            await self.agent.run(
+                "Open a browser and navigate to x.com. Use Cmd+Space and type Safari to open the browser, then type x.com in the address bar.",
+                context={"target_url": "x.com"},
+            )
         except Exception as e:
             logger.warning(f"导航到 X 失败: {e}")
             console.print("[yellow]请手动打开浏览器并确保已登录到 X，然后重试。[/yellow]")
@@ -35,7 +38,7 @@ class DesktopXPublisher:
         console.print("[cyan]找到发帖框...[/cyan]")
         try:
             await self.agent.run(
-                "在 X 首页找到发帖按钮（通常是蓝色的 Post/发布 按钮或笔图标）并点击，开始写新帖子。",
+                "On x.com home page, find and click the compose/post button (usually a blue 'Post' button or pen icon) to start writing a new post.",
             )
         except Exception as e:
             logger.warning(f"未找到发帖按钮: {e}")
@@ -52,7 +55,7 @@ class DesktopXPublisher:
                 console.print(f"[dim]输入第 {i+1}/{len(chunks)} 段...[/dim]")
                 try:
                     await self.agent.run(
-                        f"在编辑框中输入以下文字：{chunk!r}",
+                        f"Type the following text into the compose box: {chunk!r}",
                         context={"text_to_type": chunk},
                     )
                 except Exception as e:
@@ -66,10 +69,9 @@ class DesktopXPublisher:
                     console.print("[dim]添加另一篇帖子...[/dim]")
                     try:
                         await self.agent.run(
-                            "找到并点击 'Add another post' 或 '+' 按钮，添加 Thread 的下一篇帖子。",
+                            "Click 'Add another post' or the '+' button to create a thread continuation.",
                         )
                     except Exception:
-                        # 回退：按 Cmd+Enter 或 Tab 找按钮
                         from app.desktop.executor import execute_desktop
                         from app.schemas.action import ActionType, PlannedAction
                         await execute_desktop(PlannedAction(
@@ -82,7 +84,7 @@ class DesktopXPublisher:
             console.print("[dim]输入帖子内容...[/dim]")
             try:
                 await self.agent.run(
-                    f"在编辑框中输入以下文字：{body!r}",
+                    f"Type the following text into the compose box: {body!r}",
                     context={"text_to_type": body},
                 )
             except Exception as e:
@@ -92,7 +94,7 @@ class DesktopXPublisher:
         await asyncio.sleep(1)
 
         # Phase 4: 人工确认 + 发布
-        obs = await observe_desktop("预览即将发布的帖子内容")
+        obs = await observe_desktop("Preview the composed post before publishing")
         console.print("[yellow]即将发布，请确认内容正确...[/yellow]")
         console.print(f"[bold]{body[:150]}{'...' if len(body) > 150 else ''}[/bold]")
         await asyncio.sleep(3)
@@ -100,7 +102,7 @@ class DesktopXPublisher:
         console.print("[cyan]点击发布按钮...[/cyan]")
         try:
             await self.agent.run(
-                "找到蓝色的 'Post' 或 '发布' 按钮并点击，发布这条帖子。",
+                "Find and click the blue 'Post' or '发布' button to publish this post.",
             )
         except Exception as e:
             logger.warning(f"发布失败: {e}")

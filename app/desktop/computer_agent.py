@@ -40,9 +40,19 @@ _SYSTEM_PROMPT = """You are controlling a macOS desktop by looking at screenshot
 | done | - | Task is complete |
 | human | message | Need human help |
 
+## Opening Applications — ALWAYS Use Spotlight
+To open or switch to an application, use Cmd+Space then type the app name:
+1. hotkey: keys=["command", "space"] — open Spotlight
+2. wait: seconds=0.5 — wait for Spotlight search bar
+3. type_text: text="Safari" — type app name
+4. hotkey: keys=["return"] — open it
+5. wait: seconds=2.0 — wait for app to launch
+
+Do NOT click dock icons — they are unreliable (app may already be running but window hidden). Spotlight always works.
+
 ## macOS Keyboard Shortcuts Reference
-- Cmd+Space: Spotlight search
-- Cmd+Tab: Switch applications
+- Cmd+Space: Spotlight search (for opening apps)
+- Cmd+Tab: Switch between running applications
 - Cmd+L: Focus browser address bar
 - Cmd+A: Select all text
 - Cmd+C/V/X: Copy/Paste/Cut
@@ -55,18 +65,18 @@ _SYSTEM_PROMPT = """You are controlling a macOS desktop by looking at screenshot
 - Escape: Close dialog / cancel
 - Enter/Return: Confirm / submit
 - Tab: Focus next field
-- Arrow keys: Navigate
 
 ## Rules
 1. Look at the screenshot FIRST. Identify what app is focused and what page/state it shows.
-2. Output coordinates in pixels. (0,0) = top-left. x increases right, y increases down.
-3. Stay within screen bounds. Use element centers as click targets.
-4. Be human-like: natural timing, don't rush between steps.
-5. If the page is loading, use "wait" action.
-6. If stuck (pop-ups, dialogs you can't handle), use "human" action.
-7. If the task is done, use "done" action.
-8. NEVER generate more than 3 steps at once.
-9. Output ONLY valid JSON.
+2. To open an application, ALWAYS use Cmd+Space + type name + Enter. NEVER click dock icons.
+3. Output coordinates in pixels. (0,0) = top-left. x increases right, y increases down.
+4. Stay within screen bounds. Use element centers as click targets.
+5. Be human-like: natural timing, don't rush between steps.
+6. If the page is loading, use "wait" action.
+7. If stuck (pop-ups, dialogs you can't handle), use "human" action.
+8. If the task is done, use "done" action.
+9. NEVER generate more than 3 steps at once.
+10. Output ONLY valid JSON.
 
 ## Output Format
 {
@@ -102,7 +112,7 @@ class ComputerAgent:
         self,
         *,
         max_cycles: int = 30,
-        max_stuck_cycles: int = 5,
+        max_stuck_cycles: int = 3,
         stop_event: object = None,
         verbose: bool = True,
     ):
@@ -113,6 +123,7 @@ class ComputerAgent:
         self._history: list[str] = []
         self._actions_executed: list[PlannedAction] = []
         self._last_actions: list[str] = []
+        self._llm_failures: int = 0
 
     def _log(self, msg: str, style: str = "") -> None:
         """Print to console if verbose."""
@@ -130,13 +141,6 @@ class ComputerAgent:
     ) -> ExecutionResult:
         """
         Main entry point. Runs the full see-think-act-verify loop.
-
-        Args:
-            task: Human-language description of what to accomplish
-            context: Optional domain-specific guidance
-
-        Returns:
-            ExecutionResult with status and actions taken
         """
         logger.info(f"[ComputerAgent] Starting task: {task}")
         self._log(f"[Agent] 任务: {task}", "dim")
@@ -160,12 +164,32 @@ class ComputerAgent:
 
             # ── PHASE 2: THINK ──
             self._log("  LLM 分析中...", "dim")
-            try:
-                plan = await self._observe_and_decide(obs, task, context)
-            except Exception as e:
-                self._log(f"LLM 调用失败: {e}", "red")
-                await asyncio.sleep(2)
+            plan = None
+            for retry in range(3):
+                try:
+                    plan = await self._observe_and_decide(obs, task, context)
+                    if plan and plan.steps:
+                        break
+                    if plan and plan.confidence == 0.0:
+                        self._log(f"  LLM 返回空动作计划 (重试 {retry+1}/2)", "yellow")
+                        await asyncio.sleep(1)
+                except asyncio.TimeoutError:
+                    self._log(f"  LLM 调用超时 (重试 {retry+1}/2)", "yellow")
+                    await asyncio.sleep(2)
+                except Exception as e:
+                    self._log(f"  LLM 调用失败: {e} (重试 {retry+1}/2)", "yellow")
+                    await asyncio.sleep(2)
+
+            if not plan or (not plan.steps and not plan.notes):
+                self._log("  LLM 多次失败，等待后跳过此轮", "red")
+                self._llm_failures += 1
+                if self._llm_failures >= 5:
+                    self._log(f"LLM 连续失败 {self._llm_failures} 次，终止", "red")
+                    raise HumanReviewRequired(f"LLM 连续失败 {self._llm_failures} 次，API 可能有问题")
+                await asyncio.sleep(3)
                 continue
+
+            self._llm_failures = 0  # reset on success
 
             # Check terminal states
             if self._has_done_action(plan):
@@ -193,8 +217,9 @@ class ComputerAgent:
                     reason="No action planned, scrolling to explore",
                 )]
 
-            # Print what the model observed
-            self._log(f"  识别: {plan.notes[:80] if plan.notes else ''}", "dim")
+            # Print observation
+            if plan.notes and plan.notes.strip():
+                self._log(f"  识别: {plan.notes[:120]}", "dim")
 
             # ── PHASE 3: ACT ──
             for step in plan.steps:
@@ -220,7 +245,7 @@ class ComputerAgent:
                     logger.warning(f"[ComputerAgent] Execution failed: {e}")
                     self._history.append(f"FAIL: {step.action.value} - {e}")
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
 
         self._log(f"达到最大循环次数 ({self.max_cycles})", "yellow")
         return ExecutionResult(status="max_cycles", actions=self._actions_executed, notes=f"Reached max cycles ({self.max_cycles})")
@@ -248,7 +273,7 @@ class ComputerAgent:
         # Timeout-protected LLM call
         raw = await asyncio.wait_for(
             vision_chat(text_prompt=full_prompt, image_path=obs.screenshot_path, max_tokens=1024),
-            timeout=120,  # 2 minute timeout
+            timeout=120,
         )
 
         try:
@@ -285,10 +310,15 @@ class ComputerAgent:
         return plan.notes or "Human intervention required"
 
     def _is_stuck(self, plan: ActionPlan) -> bool:
+        """Detect stuck by repeated action type or same description."""
         if not plan.steps:
             return False
-        current = f"{plan.steps[0].action.value}:{plan.steps[0].description or ''}"
-        if self._last_actions.count(current) >= self.max_stuck_cycles:
+        current_action = plan.steps[0].action.value
+        current_desc = plan.steps[0].description or ''
+        # Count how many times this action type + description appeared
+        pattern = f"{current_action}:{current_desc}"
+        matches = sum(1 for a in self._last_actions if a.startswith(f"{current_action}:"))
+        if matches >= self.max_stuck_cycles:
             return True
         if plan.confidence < 0.3 and len(self._history) > 10:
             recent_fails = sum(1 for h in self._history[-10:] if "FAIL" in h)
