@@ -435,34 +435,67 @@ import re as _re
 
 def _normalize_step(step: PlannedAction) -> None:
     """Fix common LLM output issues: coords in description, text in wrong field."""
-    if not step.description:
-        return
+    desc = step.description or ''
     # Fix 1: Extract coords from description like "(476, 133)" or "(476,133)"
-    if step.x is None and step.y is None:
-        m = _re.search(r'\((\d+)\s*,\s*(\d+)\)', step.description)
+    if step.x is None and step.y is None and desc:
+        m = _re.search(r'\((\d+)\s*,\s*(\d+)\)', desc)
         if m:
             step.x = int(m.group(1))
             step.y = int(m.group(2))
-    # Fix 2: Extract quoted text from description for type_text
-    if step.action == ActionType.TYPE_TEXT and not step.text:
-        # Try double quotes first
-        m = _re.search(r'"([^"]+)"', step.description)
+    # Fix 2: Extract text for type_text — quoted, instruction, or raw
+    if step.action == ActionType.TYPE_TEXT and not step.text and desc:
+        # Try double/single quotes first
+        m = _re.search(r'"([^"]+)"', desc)
         if not m:
-            # Try single quotes
-            m = _re.search(r"'([^']+)'", step.description)
+            m = _re.search(r"'([^']+)'", desc)
         if m:
             step.text = m.group(1)
+        # Try instruction pattern: "Type X into/in/press..."
+        elif _re.match(r'(?i)type\s+', desc):
+            # Extract text between "Type" and prepositions
+            m2 = _re.search(r'(?i)type\s+(.+?)(?:\s+into|\s+in\s+|\s+to\s+|\s+press|\s+then|$)', desc)
+            if m2:
+                step.text = m2.group(1).strip().strip('"\'')
+            else:
+                step.text = desc.strip()
+        else:
+            step.text = desc.strip()
     # Fix 3: Extract keys from description for hotkey
     if step.action == ActionType.HOTKEY and not step.keys:
-        desc = step.description.lower().strip()
-        for kw, key in [('return', 'return'), ('enter', 'return'), ('escape', 'escape'),
-                         ('esc', 'escape'), ('down', 'down'), ('up', 'up'),
-                         ('left', 'left'), ('right', 'right'), ('tab', 'tab'),
-                         ('command+l', 'command'), ('cmd+l', 'command'),
-                         ('space', 'space'), ('delete', 'delete'), ('backspace', 'backspace')]:
-            if kw in desc:
-                step.keys = [key] if key != 'command' else ['command', 'l']
+        dl = desc.lower().strip()
+        # Map common descriptions to actual keys
+        for kw, keys in [
+            ('command+l', ['command', 'l']),
+            ('cmd+l', ['command', 'l']),
+            ('address bar', ['command', 'l']),
+            ('navigate', ['return']),
+            ('press enter', ['return']),
+            ('enter', ['return']),
+            ('return', ['return']),
+            ('escape', ['escape']),
+            ('esc', ['escape']),
+            ('close', ['escape']),
+            ('scroll down', ['down']),
+            ('down', ['down']),
+            ('scroll up', ['up']),
+            ('up', ['up']),
+            ('scroll left', ['left']),
+            ('left', ['left']),
+            ('scroll right', ['right']),
+            ('right', ['right']),
+            ('tab', ['tab']),
+            ('space', ['space']),
+            ('page down', ['pagedown']),
+            ('page up', ['pageup']),
+            ('delete', ['delete']),
+            ('backspace', ['backspace']),
+        ]:
+            if kw in dl:
+                step.keys = keys
                 break
+        # Fallback: if still no keys, use return (most common LLM intent)
+        if not step.keys and desc:
+            step.keys = ['return']
 
 
 def _extract_json(text: str) -> str:
