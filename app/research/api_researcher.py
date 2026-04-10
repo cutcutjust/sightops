@@ -35,27 +35,30 @@ def _fmt_num(n: int) -> str:
     return str(n)
 
 
-def _print_tweet_line(author: str, text: str, likes: int, replies: int, views: int, reposts: int, relevance: float | None = None, saved: bool = False) -> None:
-    """单行紧凑输出一条帖子。"""
-    # 指标部分
-    metrics = Text()
-    metrics.append(f" {_fmt_num(likes)}", style="dim")
-    metrics.append(f" {_fmt_num(reposts)}", style="dim")
-    metrics.append(f" {_fmt_num(replies)}", style="dim")
-    metrics.append(f" {_fmt_num(views)}", style="dim")
-
-    # 相关性
+def _print_tweet_card(author: str, text: str, likes: int, replies: int, views: int, reposts: int, relevance: float | None = None, comments: int = 0, saved: bool = False) -> None:
+    """两行紧凑输出一条帖子：第一行正文，第二行指标。"""
+    # 正文行
     rel_style = C_ACCENT if relevance and relevance >= 4 else (C_WARN if relevance and relevance < 3 else "")
-    rel_str = f" R{relevance:.0f}" if relevance else ""
-
-    line = Text()
-    line.append(f"  @{author}", style="bold" if saved else "")
-    line.append(metrics)
+    rel_str = f"  R{relevance:.0f}" if relevance else ""
+    body_line = Text()
+    body_line.append(f"  @{author}", style="bold" if saved else "")
     if rel_str:
-        line.append(rel_str, style=rel_style)
-    line.append(f"  {text[:72]}", style="dim")
+        body_line.append(rel_str, style=rel_style)
+    body_line.append(f"  {text}")
+    console.print(body_line)
 
-    console.print(line)
+    # 指标行
+    metrics_line = Text()
+    metrics_line.append("    ", style="")
+    metrics_line.append(f"{_fmt_num(likes)}", style="dim")
+    metrics_line.append(" likes  ", style="dim")
+    metrics_line.append(f"{_fmt_num(reposts)}", style="dim")
+    metrics_line.append(" reposts  ", style="dim")
+    metrics_line.append(f"{_fmt_num(comments)}", style="dim")
+    metrics_line.append(" comments  ", style="dim")
+    metrics_line.append(f"{_fmt_num(views)}", style="dim")
+    metrics_line.append(" views", style="dim")
+    console.print(metrics_line)
 
 
 class APIXResearcher:
@@ -181,10 +184,8 @@ class APIXResearcher:
                 console.print(
                     f"  [{C_ACCENT}]saved[/{C_ACCENT}] "
                     f"@{content.author}  "
-                    f"{_fmt_num(content.metrics.likes)} {_fmt_num(content.metrics.reposts)} "
-                    f"{_fmt_num(len(content.comments))} {_fmt_num(content.metrics.views)}  "
                     f"[{score_style}]{content.final_score:.1f}[/{score_style}]  "
-                    f"[{C_DIM}]{md_path.split('/')[-1]}[/{C_DIM}]"
+                    f"[{C_DIM}]{content.body_text[:80]}[/{C_DIM}]"
                 )
 
                 save_reference(
@@ -299,12 +300,13 @@ class APIXResearcher:
         # 4. LLM 相关性打分（按用户确认的调研方向）
         content.relevance_score = await score_relevance(content, research_context=research_context)
 
-        # 单行输出
-        _print_tweet_line(
+        # 两行输出
+        _print_tweet_card(
             author, tweet.text,
             content.metrics.likes, len(content.comments),
             content.metrics.views, content.metrics.reposts,
             relevance=content.relevance_score,
+            comments=len(content.comments),
         )
 
         return content
