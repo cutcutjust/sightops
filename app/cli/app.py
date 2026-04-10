@@ -129,22 +129,20 @@ def main(ctx: typer.Context):
         console.print(f"[{WARN}]无效选择[/]")
 
 
-# ── 需求轮询 ──────────────────────────────────────────────────────────
+# ── 需求轮询（多轮对话）──────────────────────────────────────────────
 
 async def _clarify_topics(topics: list[str]) -> dict:
-    """对模糊/单一关键词做方向拆解，用户确认后返回调研上下文。
+    """多轮对话式需求澄清，充分确认调研方向后返回上下文。
 
-    Returns:
-        {
-            "query": "原始关键词",
-            "directions": [
-                {"name": "...", "description": "...", "keywords": [...]},
-                ...
-            ],
-            "search_keywords": ["kw1", "kw2", ...],  # 用于 API 搜索
-            "relevance_prompt": "...",               # 用于相关性打分的完整描述
-        }
+    流程:
+    1. 用户给出初始关键词 → LLM 拆解方向
+    2. 用户可以选方向、补充说明、修正方向
+    3. 系统根据补充信息重新拆解
+    4. 重复直到用户确认 "ok" 或选择方向编号
     """
+    from app.llm.client import chat
+    from app.desktop.research_agent import _safe_extract_json
+
     keyword = " ".join(topics) if topics else ""
 
     # 关键词已经足够具体（>3个 或 每个都长），直接用
@@ -158,63 +156,102 @@ async def _clarify_topics(topics: list[str]) -> dict:
             return _build_context("默认主题", [{"name": "默认", "description": "使用配置文件关键词", "keywords": default_kws}])
         return _build_context("", [])
 
-    console.print(f"\n    [{BRAND}]▶[/] 分析「{keyword}」的调研方向...")
+    # ── 多轮对话 ──────────────────────────────────────────────────────
+    conversation: list[dict] = []  # LLM 对话历史
+    current_keyword = keyword
+    directions: list[dict] = []
 
-    from app.llm.client import chat
-    from app.desktop.research_agent import _safe_extract_json
+    while True:
+        # 拆解方向
+        console.print(f"\n    [{BRAND}]▶[/] 分析「{current_keyword}」的调研方向...")
 
-    prompt = (
-        f"用户想调研「{keyword}」，请拆解为 3-5 个具体的研究方向。\n"
-        "每个方向需包含：\n"
-        '  - id: 序号\n'
-        '  - name: 方向名称（简短）\n'
-        '  - description: 一句话说明这个方向关注什么、为什么有价值\n'
-        '  - keywords: 2-3 个搜索关键词（英文，适合 X 搜索）\n'
-        '返回 JSON 数组，只返回 JSON。'
-    )
-    raw = await chat(
-        [{"role": "user", "content": prompt}],
-        json_mode=True, temperature=0.5, max_tokens=500,
-    )
+        if not conversation:
+            prompt = (
+                f"用户想调研「{current_keyword}」，请拆解为 3-5 个具体的研究方向。\n"
+                "每个方向需包含：\n"
+                '  - id: 序号\n'
+                '  - name: 方向名称（简短）\n'
+                '  - description: 一句话说明这个方向关注什么、为什么有价值\n'
+                '  - keywords: 2-3 个搜索关键词（英文，适合 X 搜索）\n'
+                '返回 JSON 数组，只返回 JSON。'
+            )
+        else:
+            prompt = (
+                f"用户补充了需求：「{current_keyword}」\n"
+                "请根据之前的方向和用户新的补充，重新拆解为 3-5 个更精准的研究方向。\n"
+                "每个方向需包含：\n"
+                '  - id: 序号\n'
+                '  - name: 方向名称（简短）\n'
+                '  - description: 一句话说明这个方向关注什么、为什么有价值\n'
+                '  - keywords: 2-3 个搜索关键词（英文，适合 X 搜索）\n'
+                '返回 JSON 数组，只返回 JSON。'
+            )
 
-    try:
-        directions = json.loads(_safe_extract_json(raw))
-        if not isinstance(directions, list) or not directions:
-            raise ValueError("空结果")
-    except Exception:
-        console.print(f"    [dim]无法拆解方向，直接搜索[/dim]")
-        return _build_context(keyword, [{"name": keyword, "description": keyword, "keywords": topics or [keyword]}])
+        conversation.append({"role": "user", "content": prompt})
+        raw = await chat(
+            conversation,
+            json_mode=True, temperature=0.5, max_tokens=500,
+        )
+        conversation.append({"role": "assistant", "content": raw})
 
-    # 显示方向
-    console.print(f"\n    「{keyword}」可拆解为以下方向：\n")
-    t = Table.grid(padding=(0, 2))
-    t.add_column("序号", style=BRAND, width=4)
-    t.add_column("方向")
-    t.add_column("说明", style="dim")
-    t.add_column("搜索词", style=INFO)
-    for d in directions:
-        kws = " ".join(d.get("keywords", []))
-        t.add_row(str(d.get("id", 0)), d.get("name", ""), d.get("description", ""), kws)
-    console.print(t)
-    console.print("")
+        try:
+            directions = json.loads(_safe_extract_json(raw))
+            if not isinstance(directions, list) or not directions:
+                raise ValueError("空结果")
+        except Exception:
+            if not directions:
+                console.print(f"    [dim]无法拆解方向，直接搜索[/dim]")
+                return _build_context(keyword, [{"name": keyword, "description": keyword, "keywords": topics or [keyword]}])
 
-    choice = typer.prompt("选择方向（多选用逗号，0=全部）", default="0")
-    selected_directions = []
-    if choice.strip() == "0":
-        selected_directions = directions
-    else:
+        # 显示方向
+        console.print(f"\n    「{current_keyword}」可拆解为：\n")
+        t = Table.grid(padding=(0, 2))
+        t.add_column("序号", style=BRAND, width=4)
+        t.add_column("方向")
+        t.add_column("说明", style="dim")
+        t.add_column("搜索词", style=INFO)
+        for d in directions:
+            kws = " ".join(d.get("keywords", []))
+            t.add_row(str(d.get("id", 0)), d.get("name", ""), d.get("description", ""), kws)
+        console.print(t)
+        console.print("")
+
+        # 提示用户
+        console.print(f"    [{C_DIM}]输入编号选择方向，多个用逗号分隔，0=全部")
+        console.print(f"    补充说明可进一步缩小范围，如「只关注 Claude 模型发布」")
+        console.print(f"    输入 ok 确认当前方向开始调研[/{C_DIM}]")
+        choice = typer.prompt("    选择", default="0")
+        choice = choice.strip()
+
+        # 确认开始
+        if choice.lower() in ("ok", "ok.", "y", "yes", "确认", "确定", "开始"):
+            selected_directions = directions
+            break
+
+        # 选编号
+        if choice == "0" or choice == "":
+            selected_directions = directions
+            break
+
         try:
             indices = [int(x.strip()) for x in choice.split(",") if x.strip()]
-            for idx in indices:
-                if 1 <= idx <= len(directions):
-                    selected_directions.append(directions[idx - 1])
+            if all(1 <= idx <= len(directions) for idx in indices):
+                selected_directions = [directions[idx - 1] for idx in indices]
+                break
         except (ValueError, IndexError):
-            selected_directions = [{"name": keyword, "description": keyword, "keywords": topics or [keyword]}]
+            pass
+
+        # 不是编号 → 视为补充说明，进入下一轮
+        console.print(f"\n    [{ACCENT}]补充收到[/{ACCENT}]，重新分析方向...")
+        current_keyword = f"{keyword}，补充：{choice}"
 
     if not selected_directions:
         selected_directions = [{"name": keyword, "description": keyword, "keywords": topics or [keyword]}]
 
     return _build_context(keyword, selected_directions)
+
+
+C_DIM = "dim"
 
 
 def _build_context(query: str, directions: list[dict]) -> dict:
