@@ -2,21 +2,27 @@
 SightOps CLI  —  sightops <command>
 
 Commands:
-  observe    实时屏幕观察器（截图 + LLM 分析 + 操作计划）
-  research   全屏视觉调研 X（像真人一样操作电脑）
+  setup      初始化项目（首次使用）
+  observe    实时屏幕观察器
+  research   全屏视觉调研 X
   analyze    爆款风格分析
   write      根据调研生成草稿
   publish    发布草稿到 X
-  status     查看草稿和任务状态
-  setup      初始化目录和数据库
+  status     查看数据总览
 """
 from __future__ import annotations
 
 import asyncio
+import platform as _plat
+import shutil
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.rule import Rule
 from rich.table import Table
+from rich.text import Text
 
 from app.core.config import get_settings, load_yaml
 from app.memory.sqlite_repo import (
@@ -28,27 +34,124 @@ from app.memory.sqlite_repo import (
     save_universal_draft,
 )
 
-cli = typer.Typer(name="sightops", help="全屏视觉 AI 调研 Agent — 像真人一样操作电脑")
+cli = typer.Typer(
+    name="sightops",
+    help="SightOps — 全屏视觉 AI 调研 Agent",
+    rich_markup_mode="rich",
+    add_completion=False,
+)
 console = Console()
+
+# ── 视觉常量 ─────────────────────────────────────────────────────────
+
+BRAND = "#6C63FF"  # 主题紫
+ACCENT = "#00D4AA"  # 主题绿
+WARN = "#FF6B6B"    # 警告红
+INFO = "#58A6FF"    # 信息蓝
+
+def _header(text: str) -> Panel:
+    return Panel(
+        Text(text, style=f"bold {BRAND}"),
+        border_style=BRAND,
+        padding=(0, 2),
+    )
+
+def _step(text: str, done: bool = False) -> None:
+    icon = "[bold green]✓[/bold green]" if done else f"[{BRAND}▶[/]"
+    style = "dim" if done else ""
+    console.print(f"    {icon} [{style}]{text}[/{style}]")
+
+def _rule(text: str = "") -> None:
+    console.print(Rule(text, style=f"dim {BRAND}"))
+
+def _banner(text: str, subtitle: str = "") -> None:
+    lines = [f"[bold {BRAND}]{text}[/bold {BRAND}]"]
+    if subtitle:
+        lines.append(f"[dim]{subtitle}[/dim]")
+    w = shutil.get_terminal_size().columns
+    console.print("")
+    console.print(Panel(
+        "\n".join(lines),
+        border_style=BRAND,
+        padding=(1, 2),
+    ))
+    console.print("")
 
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 
 @cli.command()
 def setup():
-    """初始化目录和数据库。"""
+    """初始化项目 — 首次使用运行此命令。"""
+    _banner("SightOps 初始化", "全屏视觉 AI 调研 Agent v0.1.0")
+
     s = get_settings()
-    s.data_path.mkdir(parents=True, exist_ok=True)
-    s.assets_path.mkdir(parents=True, exist_ok=True)
-    (s.data_path / "screenshots").mkdir(exist_ok=True)
-    (s.data_path / "desktop_screenshots").mkdir(exist_ok=True)
-    (s.data_path / "drafts").mkdir(exist_ok=True)
-    (s.data_path / "cache").mkdir(exist_ok=True)
-    (s.data_path / "runs").mkdir(exist_ok=True)
+
+    # Step 1: 检查 Python
+    py_ver = f"{_plat.python_version()} {_plat.python_implementation()}"
+    _step(f"Python 环境: {py_ver}", done=True)
+
+    # Step 2: 检查配置
+    has_key = bool(s.llm_api_key)
+    _step(f"LLM API Key: {'已配置 ✓' if has_key else '未配置 ✗'}", done=has_key)
+    if not has_key:
+        console.print(f"    [{WARN}]请在 .env 中设置 LLM_API_KEY[/{WARN}]")
+
+    # Step 3: 创建目录
+    dirs = [
+        ("数据目录", s.data_path),
+        ("资源目录", s.assets_path),
+        ("截图缓存", s.data_path / "screenshots"),
+        ("桌面截图", s.data_path / "desktop_screenshots"),
+        ("草稿目录", s.data_path / "drafts"),
+        ("缓存目录", s.data_path / "cache"),
+        ("运行日志", s.data_path / "runs"),
+    ]
+    _step("创建目录结构...")
+    for name, path in dirs:
+        path.mkdir(parents=True, exist_ok=True)
+    _step("目录结构创建完成", done=True)
+
+    # Step 4: 初始化数据库
+    _step("初始化 SQLite 数据库...")
     init_db()
-    console.print("[bold green]Setup 完成[/bold green]")
-    console.print(f"  数据目录: {s.data_path}")
-    console.print(f"  资源目录: {s.assets_path}")
+    _step("数据库初始化完成", done=True)
+
+    # Step 5: 检查权限
+    _step("检查 macOS 权限...")
+    from app.desktop.permissions import (
+        check_screen_recording,
+        check_accessibility,
+    )
+    screen_ok = check_screen_recording()
+    access_ok = check_accessibility()
+    if screen_ok and access_ok:
+        _step("Screen Recording + Accessibility 权限正常", done=True)
+    else:
+        console.print("")
+        if not screen_ok:
+            console.print(f"    [{WARN}]✗ Screen Recording 权限未授予[/{WARN}]")
+            console.print(f"    [dim]系统设置 → 隐私与安全性 → 屏幕录制 → 启用终端[/{dim}]")
+        if not access_ok:
+            console.print(f"    [{WARN}]✗ Accessibility 权限未授予[/{WARN}]")
+            console.print(f"    [dim]系统设置 → 隐私与安全性 → 辅助功能 → 启用终端[/{dim}]")
+        console.print(f"    [dim]授予权限后需重启 Terminal 生效[/{dim}]")
+
+    # Summary
+    _rule()
+    console.print("")
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column("项目", style=BRAND)
+    summary.add_column("值")
+    summary.add_row("数据目录", str(s.data_path))
+    summary.add_row("资源目录", str(s.assets_path))
+    summary.add_row("LLM 模型", s.llm_vision_model)
+    summary.add_row("数据库", "SQLite ✓")
+    summary.add_row("Notion", "已配置 ✓" if s.notion_token else "未配置")
+    console.print(Panel(summary, title="[bold green]Setup 完成[/bold green]", border_style="green"))
+    console.print("")
+    console.print("  [dim]下一步: [bold white]sightops research \"你的主题\"[/bold white][/dim]")
+    console.print("")
 
 
 # ── observe ──────────────────────────────────────────────────────────────────
@@ -57,7 +160,8 @@ def setup():
 def observe(
     interval: float = typer.Option(8.0, "--interval", "-i", help="截图间隔（秒）"),
 ):
-    """实时屏幕观察器 — 全屏截图 + LLM 分析 + 操作计划，显示在小窗口中。"""
+    """实时屏幕观察器 — 全屏截图 + LLM 分析 + 操作计划。"""
+    _banner("屏幕观察器", f"间隔 {interval}s · 移到左上角紧急停止")
     from app.observer.viewer import start_viewer
     start_viewer(interval=interval)
 
@@ -69,7 +173,7 @@ def research(
     topics: list[str] = typer.Argument(None, help="搜索主题（默认用 topics.yaml）"),
     limit: int = typer.Option(60, "--limit", "-n", help="最多采集帖子数"),
 ):
-    """全屏视觉调研 — 像真人一样操作电脑，每条实时记录。"""
+    """全屏视觉调研 — 像真人一样操作电脑。"""
     asyncio.run(_research_async(topics or [], limit))
 
 
@@ -78,26 +182,48 @@ async def _research_async(topics: list[str], limit: int):
     from app.desktop.research_agent import DesktopXResearcher
     from app.memory.sqlite_repo import count_references
 
-    check_all_permissions()
     init_db()
+    check_all_permissions()
 
-    console.print("[bold cyan]启动全屏调研 — 像真人一样操作电脑，每条实时记录[/bold cyan]")
-    console.print("[dim]紧急终止：鼠标移到屏幕左上角[/dim]\n")
+    _banner("全屏调研启动", "像真人一样操作电脑 · 每条实时记录")
+
+    topic_cfg = load_yaml("configs/topics.yaml")
+    if not topics:
+        topics = topic_cfg.get("keywords", [])
+
+    # Show plan
+    plan = Table.grid(padding=(0, 1))
+    plan.add_column("步骤", style=BRAND)
+    plan.add_column("内容")
+    plan.add_row("1", "打开 Safari → 导航到 x.com")
+    plan.add_row("2", f"搜索 {len(topics)} 个主题: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
+    plan.add_row("3", "逐一点开帖子 → 正文 → 图片 → 评论 → 指标")
+    plan.add_row("4", "Notion 同步保存")
+    plan.add_row("5", f"最多采集 {limit} 条")
+    console.print(Panel(plan, title="[bold]执行计划[/bold]", border_style=BRAND))
+    console.print("")
 
     researcher = DesktopXResearcher()
 
-    console.print("[cyan]正在搜索 X 内容...[/cyan]")
+    console.print(f"[{BRAND}]▸ 开始搜索 X 内容...[/]")
     posts = await researcher.discover(topics or None)
     if not posts:
-        console.print("[yellow]未发现相关帖子[/yellow]")
+        console.print(f"[{WARN}]未发现相关帖子[/]")
         return
 
     total_refs, collected_refs = count_references("x")
-    console.print(
-        f"\n[bold green]调研完成:[/bold green] {len(posts)} 条帖子已深度采集\n"
-        f"[dim]引用记录: {total_refs} 条 URL "
-        f"({collected_refs} 已采集, {total_refs - collected_refs} 已浏览/跳过)[/dim]"
-    )
+
+    _rule()
+    console.print("")
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column("指标", style=BRAND)
+    summary.add_column("值", style="bold")
+    summary.add_row("帖子深度采集", str(len(posts)))
+    summary.add_row("总引用记录", str(total_refs))
+    summary.add_row("已采集", str(collected_refs))
+    summary.add_row("已浏览/跳过", str(total_refs - collected_refs))
+    console.print(Panel(summary, title="[bold green]调研完成[/bold green]", border_style="green"))
+    console.print("")
 
 
 # ── analyze ───────────────────────────────────────────────────────────────────
@@ -117,28 +243,49 @@ async def _analyze_async(days: int, platform: str):
     init_db()
     items = load_recent_content(platform=platform, days=days)
     if not items:
-        console.print(f"[yellow]最近 {days} 天没有 {platform} 内容。[/yellow]")
+        console.print(f"[{WARN}]最近 {days} 天没有 {platform.upper()} 内容。先运行 research[/]")
         return
 
-    console.print(f"[cyan]正在分析 {len(items)} 条内容...[/cyan]")
-    patterns = []
-    for item in items[:20]:
-        try:
-            pattern = await mine_style(item)
-            patterns.append(pattern)
-            console.print(
-                f"  [green]{item.author}[/green] hook={pattern.hook_type} "
-                f"structure={pattern.narrative_structure}"
-            )
-        except Exception as e:
-            console.print(f"  [yellow]{item.author} 分析失败: {e}[/yellow]")
+    _banner("爆款风格分析", f"最近 {days} 天 · {platform.upper()} · {len(items)} 条内容")
 
-    if patterns:
-        from collections import Counter
-        hooks = Counter(p.hook_type for p in patterns if p.hook_type)
-        structures = Counter(p.narrative_structure for p in patterns if p.narrative_structure)
-        console.print(f"\n[bold]热门开头类型:[/bold] {dict(hooks.most_common(3))}")
-        console.print(f"[bold]热门结构:[/bold] {dict(structures.most_common(3))}")
+    console.print(f"    [{BRAND}]▶[/] 分析 {len(items)} 条内容...")
+    patterns = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("分析中...", total=len(items[:20]))
+        for item in items[:20]:
+            try:
+                pattern = await mine_style(item)
+                patterns.append(pattern)
+                progress.update(task, advance=1, description=f"  @{item.author}  ✓")
+            except Exception as e:
+                progress.update(task, advance=1, description=f"  @{item.author}  ✗ {e}")
+
+    if not patterns:
+        console.print(f"[{WARN}]所有分析均失败[/]")
+        return
+
+    # Results table
+    from collections import Counter
+    hooks = Counter(p.hook_type for p in patterns if p.hook_type)
+    structures = Counter(p.narrative_structure for p in patterns if p.narrative_structure)
+
+    _rule("分析结果")
+    console.print("")
+
+    t = Table(title="模式统计", border_style=BRAND)
+    t.add_column("类型", style=BRAND)
+    t.add_column("Top 3")
+    hook_str = " | ".join(f"{k}: {v}" for k, v in hooks.most_common(3))
+    struct_str = " | ".join(f"{k}: {v}" for k, v in structures.most_common(3))
+    t.add_row("开头类型", hook_str)
+    t.add_row("叙事结构", struct_str)
+    t.add_row("分析样本", f"{len(patterns)} / {len(items[:20])}")
+    console.print(t)
+    console.print("")
 
 
 # ── write ─────────────────────────────────────────────────────────────────────
@@ -161,35 +308,44 @@ async def _write_async(topic: str, post_type: str, days: int, platform: str):
     init_db()
     sources = load_recent_content(platform=platform, days=days)
     if not sources:
-        console.print("[yellow]没有调研内容。先运行 `sightops research`[/yellow]")
+        console.print(f"[{WARN}]没有调研内容。先运行 [bold]sightops research[/bold][/]")
         return
 
     cfg = load_yaml("configs/app.yaml")
     k = cfg["writing"]["top_k_sources"]
     top = sorted(sources, key=lambda c: c.relevance_score, reverse=True)[:k]
-    console.print(f"[cyan]基于 {len(top)} 条来源生成草稿...[/cyan]")
 
+    _banner("草稿生成", f"基于 {len(top)} 条来源 · {post_type} · {platform.upper()}")
+
+    console.print(f"    [{BRAND}]▶[/] 提取写作风格...")
     styles = []
     for item in top[:5]:
         try:
             styles.append(await mine_style(item))
         except Exception:
             pass
+    _step(f"提取 {len(styles)} 个风格模式", done=True)
 
+    console.print(f"    [{BRAND}]▶[/] 生成通用草稿...")
     universal = await create_draft(top, styles, topic_hint=topic)
     save_universal_draft(universal)
-    console.print(f"[green]通用草稿:[/green] {universal.title}")
+    _step(f"通用草稿: {universal.title}", done=True)
 
+    console.print(f"    [{BRAND}]▶[/] 适配 {platform.upper()} 格式...")
     platform_draft = await _adapt_to_platform(universal, post_type, platform)
     save_platform_draft(platform_draft)
-    console.print(
-        f"[green]{platform.upper()} 草稿已保存:[/green] {platform_draft.draft_id} "
-        f"({platform_draft.post_type}, {len(platform_draft.body)} 字)"
-    )
+    _step(f"{platform.upper()} 草稿已保存: {platform_draft.draft_id[:12]} ({len(platform_draft.body)} 字)", done=True)
+
+    _rule()
+    console.print("")
+    preview = platform_draft.body[:300] + ("..." if len(platform_draft.body) > 300 else "")
+    console.print(Panel(preview, title=f"[bold]{platform_draft.title}[/bold]", border_style=ACCENT))
+    console.print("")
+    console.print(f"  [dim]发布: [bold white]sightops publish --id {platform_draft.draft_id[:12]}[/bold white][/dim]")
+    console.print("")
 
 
 async def _adapt_to_platform(universal, post_type: str, platform: str):
-    """将通用草稿适配到平台格式。"""
     import uuid
     from datetime import datetime
     from app.schemas.content import PlatformDraft
@@ -198,7 +354,6 @@ async def _adapt_to_platform(universal, post_type: str, platform: str):
     if post_type == "short_post":
         body = body[:280]
     elif post_type == "thread":
-        # 简单截断，后续可用视觉模型分段发布
         pass
 
     return PlatformDraft(
@@ -235,53 +390,95 @@ async def _publish_async(draft_id: str, platform: str, skip_review: bool):
     init_db()
     drafts = load_pending_platform_drafts(platform=platform)
     if not drafts:
-        console.print(f"[yellow]没有待发布的 {platform} 草稿。先运行 `sightops write`[/yellow]")
+        console.print(f"[{WARN}]没有待发布的 {platform.upper()} 草稿。先运行 sightops write[/]")
         return
 
     if draft_id:
         draft = next((d for d in drafts if d.draft_id == draft_id), None)
         if not draft:
-            console.print(f"[red]草稿 {draft_id} 不存在。[/red]")
+            console.print(f"[{WARN}]草稿 {draft_id} 不存在[/]")
             return
     else:
         draft = drafts[0]
-        console.print(f"使用最新草稿: [cyan]{draft.draft_id}[/cyan]")
+
+    _banner("发布草稿", f"{platform.upper()} · {draft.title}")
+
+    # Show draft preview
+    preview = draft.body[:500] + ("..." if len(draft.body) > 500 else "")
+    console.print(Panel(preview, title="[bold]草稿预览[/bold]", border_style=ACCENT))
+    console.print("")
 
     publisher = DesktopXPublisher()
     try:
+        console.print(f"    [{BRAND}]▶[/] 正在发布...")
         url = await publisher.publish_draft(draft)
-        console.print(f"\n[bold green]已发布:[/bold green] {url}")
+        console.print(f"\n    [bold green]✓ 已发布: {url}[/bold green]\n")
     except HumanReviewRequired as e:
-        console.print(f"\n[bold red]需要人工: {e}[/bold red]")
+        console.print(f"\n    [{WARN}]需要人工介入: {e}[/{WARN}]\n")
     except Exception as e:
-        console.print(f"\n[bold red]发布失败: {e}[/bold red]")
+        console.print(f"\n    [{WARN}]✗ 发布失败: {e}[/{WARN}]\n")
 
 
 # ── status ────────────────────────────────────────────────────────────────────
 
 @cli.command()
 def status():
-    """查看任务和草稿状态。"""
+    """查看数据总览。"""
     init_db()
+
+    from app.memory.sqlite_repo import count_references
+
+    total_refs, collected_refs = count_references("x")
     tasks = load_tasks()[:10]
     drafts = load_pending_platform_drafts()
+    sources = load_recent_content(platform="x", days=30)
 
-    t = Table(title="最近任务")
-    t.add_column("ID", style="dim")
-    t.add_column("类型")
-    t.add_column("状态")
-    for task in tasks:
-        t.add_row(task.task_id[:8], task.kind.value, task.status.value)
-    console.print(t)
+    _banner("数据总览", "SightOps Research")
 
-    d = Table(title="待发布草稿")
-    d.add_column("ID", style="dim")
-    d.add_column("平台")
-    d.add_column("类型")
-    d.add_column("标题")
-    for dr in drafts[:10]:
-        d.add_row(dr.draft_id[:8], dr.platform, dr.post_type, (dr.title or dr.body[:40]))
-    console.print(d)
+    # Overview
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column("指标", style=BRAND)
+    overview.add_column("值", style="bold")
+    overview.add_row("调研帖子", str(len(sources)))
+    overview.add_row("已深度采集", str(collected_refs))
+    overview.add_row("已浏览/跳过", str(total_refs - collected_refs))
+    overview.add_row("待发布草稿", str(len(drafts)))
+    overview.add_row("最近任务", str(len(tasks)))
+    console.print(Panel(overview, title="[bold]总览[/bold]", border_style=BRAND))
+    console.print("")
+
+    # Drafts table
+    if drafts:
+        d = Table(title="待发布草稿", border_style=BRAND)
+        d.add_column("ID", style="dim", width=12)
+        d.add_column("平台", width=8)
+        d.add_column("类型", width=12)
+        d.add_column("标题", min_width=30)
+        for dr in drafts[:10]:
+            d.add_row(dr.draft_id[:12], dr.platform.upper(), dr.post_type, (dr.title or dr.body[:40]))
+        console.print(d)
+        console.print("")
+
+    # Recent content
+    if sources:
+        c = Table(title="最近采集内容 (Top 10)", border_style=BRAND)
+        c.add_column("作者", style=BRAND)
+        c.add_column("赞", justify="right")
+        c.add_column("浏览", justify="right")
+        c.add_column("评论", justify="right")
+        c.add_column("相关性", justify="right")
+        c.add_column("标题", min_width=30)
+        for item in sorted(sources, key=lambda x: x.relevance_score, reverse=True)[:10]:
+            c.add_row(
+                f"@{item.author[:15]}",
+                str(item.metrics.likes),
+                str(item.metrics.views),
+                str(len(item.comments)),
+                f"{item.relevance_score:.1f}",
+                (item.title or item.body_text[:40])[:50],
+            )
+        console.print(c)
+        console.print("")
 
 
 if __name__ == "__main__":

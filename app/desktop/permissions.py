@@ -60,5 +60,4 @@ def check_all_permissions() -> bool:
         console.print("[dim]授予权限后，需退出并重新打开 Terminal 才能生效。[/dim]")
         sys.exit(1)
 
-    console.print("[bold green]✓ 所有权限检查通过[/bold green]")
     return True
