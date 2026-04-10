@@ -68,6 +68,11 @@ class APIXResearcher:
                     if self._total_collected >= target_posts:
                         break
 
+                    # 去重
+                    if tweet.id in self._collected_urls:
+                        continue
+                    self._collected_urls.add(tweet.id)
+
                     post_data = await self._collect_and_save_tweet(
                         tweet, topic, min_comments=min_comments
                     )

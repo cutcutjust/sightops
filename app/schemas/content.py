@@ -37,6 +37,7 @@ class CollectedContent(BaseModel):
     screenshots: list[str] = []      # local paths
     summary: str = ""
     relevance_score: float = 0.0     # 1-5
+    engagement_score: float = 0.0   # likes + reposts*1.5 + comments*2 + views*0.01
     tags: list[str] = []
     external_links: list[str] = []    # external URLs extracted from post body
     comment_links: list[str] = []     # X /status/ URLs of reply posts

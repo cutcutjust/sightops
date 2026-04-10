@@ -209,9 +209,9 @@ async def _research_async(topics: list[str], limit: int, min_comments: int, mode
     else:
         plan.add_row("1", f"X API 搜索 {len(topics)} 个主题，按互动量排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
         plan.add_row("2", f"逐个采集帖子 → API 正文/评论({min_comments}+) → LLM 打分/摘要")
-    plan.add_row("4", "实时保存: SQLite + 本地 MD + Notion（每帖立即保存）")
-    plan.add_row("5", f"目标采集 {limit} 条")
-    plan.add_row("6", "生成调研报告（带引用）: xagent report")
+    plan.add_row("3", "实时保存: SQLite + 本地 MD + Notion（每帖立即保存）")
+    plan.add_row("4", f"目标采集 {limit} 条")
+    plan.add_row("5", "生成调研报告（带引用）: xagent report")
     console.print(Panel(plan, title="[bold]执行计划[/bold]", border_style=BRAND))
     console.print("")
 
