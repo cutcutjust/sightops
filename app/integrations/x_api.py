@@ -21,13 +21,21 @@ from dataclasses import dataclass, field
 
 from app.core.logger import logger
 
-# ── Credentials (from env) ─────────────────────────────────
+# ── Credentials (from env, lazy-loaded) ─────────────────────
 
-CONSUMER_KEY = os.environ.get("X_API_CONSUMER_KEY", "")
-CONSUMER_SECRET = os.environ.get("X_API_CONSUMER_SECRET", "")
-ACCESS_TOKEN = os.environ.get("X_API_ACCESS_TOKEN", "")
-ACCESS_TOKEN_SECRET = os.environ.get("X_API_ACCESS_TOKEN_SECRET", "")
-BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN", "")
+_dotenv_loaded = False
+
+def _ensure_dotenv():
+    """Load .env once on first access."""
+    global _dotenv_loaded
+    if not _dotenv_loaded:
+        from dotenv import load_dotenv
+        load_dotenv()
+        _dotenv_loaded = True
+
+def _cred(key: str) -> str:
+    _ensure_dotenv()
+    return os.environ.get(key, "")
 
 
 @dataclass
@@ -75,12 +83,17 @@ class TweetComment:
 
 def _oauth1_signature(method: str, url: str, params: dict) -> str:
     """Generate OAuth 1.0a HMAC-SHA1 signature and return Authorization header."""
+    consumer_key = _cred("X_API_CONSUMER_KEY")
+    consumer_secret = _cred("X_API_CONSUMER_SECRET")
+    access_token = _cred("X_API_ACCESS_TOKEN")
+    access_token_secret = _cred("X_API_ACCESS_TOKEN_SECRET")
+
     base_params = {
-        "oauth_consumer_key": CONSUMER_KEY,
+        "oauth_consumer_key": consumer_key,
         "oauth_nonce": base64.b64encode(hashlib.sha256(str(time.time()).encode()).digest())[:32].hex(),
         "oauth_signature_method": "HMAC-SHA1",
         "oauth_timestamp": str(int(time.time())),
-        "oauth_token": ACCESS_TOKEN,
+        "oauth_token": access_token,
         "oauth_version": "1.0",
     }
     base_params.update(params)
@@ -91,7 +104,7 @@ def _oauth1_signature(method: str, url: str, params: dict) -> str:
     )
     base_string = f"{method.upper()}&{urllib.parse.quote(url, safe='')}&{urllib.parse.quote(param_str, safe='')}"
 
-    signing_key = f"{CONSUMER_SECRET}&{ACCESS_TOKEN_SECRET}"
+    signing_key = f"{consumer_secret}&{access_token_secret}"
     signature = base64.b64encode(
         hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
     ).decode()
@@ -113,8 +126,9 @@ def _make_request(url: str, params: dict, use_bearer: bool = True) -> dict | Non
     query_string = urllib.parse.urlencode(params, safe="")
     full_url = f"{url}?{query_string}"
 
-    if use_bearer and BEARER_TOKEN:
-        auth_header = f"Bearer {BEARER_TOKEN}"
+    bearer_token = _cred("X_API_BEARER_TOKEN")
+    if use_bearer and bearer_token:
+        auth_header = f"Bearer {bearer_token}"
     else:
         auth_header = _oauth1_signature("GET", url, params)
 
