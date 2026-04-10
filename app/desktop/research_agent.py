@@ -432,66 +432,84 @@ class DesktopXResearcher:
         except Exception:
             return None
 
-    # ── LLM 辅助 ──────────────────────────────────────────────────────
+    # ── LLM 辅助（委托给模块级函数）───────────────────────────────────
 
     async def _score_relevance(self, c: CollectedContent) -> float:
-        prompt = (
-            "对这条帖子与 AI/创业/科技/内容创作的相关性打 1-5 分。\n"
-            f"@{c.author} ({c.metrics.likes} 赞):\n{c.body_text[:600]}\n\n"
-            '只返回 JSON: {"score": 1-5, "reason": "简短原因"}'
-        )
-        raw = await chat(
-            [{"role": "user", "content": prompt}],
-            json_mode=True, temperature=0.2,
-        )
-        try:
-            return float(json.loads(_safe_extract_json(raw)).get("score", 3.0))
-        except Exception:
-            return 3.0
+        return await score_relevance(c)
 
     async def _summarize(self, c: CollectedContent) -> str:
-        comment_summary = ""
-        if c.comments:
-            comment_summary = f"\n热门评论 ({len(c.comments)}条):\n"
-            for cm in c.comments[:3]:
-                comment_summary += f"  - @{cm.author}: {cm.text[:100]}\n"
-
-        prompt = (
-            f"用 2-3 句话总结这条帖子，关注核心洞察。\n"
-            f"同时考虑评论中的高价值观点。\n\n"
-            f"@{c.author} ({c.metrics.likes} 赞):\n{c.body_text[:800]}\n"
-            f"{comment_summary}\n"
-            "总结:"
-        )
-        return (await chat([{"role": "user", "content": prompt}], max_tokens=300, temperature=0.3)).strip()
+        return await summarize_content(c)
 
     async def _extract_tags(self, c: CollectedContent) -> list[str]:
-        prompt = (
-            f"提取 3-5 个主题标签，返回 JSON 数组。\n"
-            f"帖子: {c.body_text[:400]}\n标签:"
-        )
-        raw = await chat([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=60)
-        try:
-            start = raw.find("[")
-            end = raw.rfind("]") + 1
-            if start >= 0 and end > start:
-                return json.loads(raw[start:end])
-        except Exception:
-            pass
-        return []
+        return await extract_tags(c)
 
     async def _sync_to_notion(self, content: CollectedContent) -> None:
-        try:
-            from app.integrations.notion_client import save_research
-            page_id = await save_research(content)
-            if page_id:
-                content.notion_page_id = page_id
-                save_content(content)
-                console.print(f"    [green]✓ Notion 已同步[/green]")
-            else:
-                console.print(f"    [dim]Notion 未配置（跳过）[/dim]")
-        except Exception as e:
-            console.print(f"    [yellow]Notion 失败: {e}[/yellow]")
+        await sync_to_notion(content)
+
+
+# ── 公共 LLM 辅助函数（供 APIXResearcher 复用）────────────────────
+
+async def score_relevance(c: CollectedContent) -> float:
+    prompt = (
+        "对这条帖子与 AI/创业/科技/内容创作的相关性打 1-5 分。\n"
+        f"@{c.author} ({c.metrics.likes} 赞):\n{c.body_text[:600]}\n\n"
+        '只返回 JSON: {"score": 1-5, "reason": "简短原因"}'
+    )
+    raw = await chat(
+        [{"role": "user", "content": prompt}],
+        json_mode=True, temperature=0.2,
+    )
+    try:
+        return float(json.loads(_safe_extract_json(raw)).get("score", 3.0))
+    except Exception:
+        return 3.0
+
+
+async def summarize_content(c: CollectedContent) -> str:
+    comment_summary = ""
+    if c.comments:
+        comment_summary = f"\n热门评论 ({len(c.comments)}条):\n"
+        for cm in c.comments[:3]:
+            comment_summary += f"  - @{cm.author}: {cm.text[:100]}\n"
+
+    prompt = (
+        f"用 2-3 句话总结这条帖子，关注核心洞察。\n"
+        f"同时考虑评论中的高价值观点。\n\n"
+        f"@{c.author} ({c.metrics.likes} 赞):\n{c.body_text[:800]}\n"
+        f"{comment_summary}\n"
+        "总结:"
+    )
+    return (await chat([{"role": "user", "content": prompt}], max_tokens=300, temperature=0.3)).strip()
+
+
+async def extract_tags(c: CollectedContent) -> list[str]:
+    prompt = (
+        f"提取 3-5 个主题标签，返回 JSON 数组。\n"
+        f"帖子: {c.body_text[:400]}\n标签:"
+    )
+    raw = await chat([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=60)
+    try:
+        start = raw.find("[")
+        end = raw.rfind("]") + 1
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end])
+    except Exception:
+        pass
+    return []
+
+
+async def sync_to_notion(content: CollectedContent) -> None:
+    try:
+        from app.integrations.notion_client import save_research
+        page_id = await save_research(content)
+        if page_id:
+            content.notion_page_id = page_id
+            save_content(content)
+            console.print(f"    [green]✓ Notion 已同步[/green]")
+        else:
+            console.print(f"    [dim]Notion 未配置（跳过）[/dim]")
+    except Exception as e:
+        console.print(f"    [yellow]Notion 失败: {e}[/yellow]")
 
 
 # ── JSON 提取 ─────────────────────────────────────────────────────

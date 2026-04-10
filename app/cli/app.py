@@ -173,20 +173,26 @@ def research(
     topics: list[str] = typer.Argument(None, help="搜索主题（默认用 topics.yaml）"),
     limit: int = typer.Option(50, "--limit", "-n", help="目标采集帖子数（默认50）"),
     min_comments: int = typer.Option(10, "--min-comments", "-c", help="每个帖子最少评论数（默认10）"),
+    mode: str = typer.Option("api", "--mode", "-m", help="调研模式: api | visual"),
 ):
-    """X API 调研 — 搜索 → 热度排序 → 深度采集 → 实时保存 MD + Notion。"""
-    asyncio.run(_research_async(topics or [], limit, min_comments))
+    """X 调研 — 搜索 → 热度排序 → 采集 → 实时保存 MD + Notion。"""
+    if mode not in ("api", "visual"):
+        console.print(f"[{WARN}]无效模式 '{mode}'，请使用 api 或 visual[/]")
+        raise typer.Exit(1)
+    asyncio.run(_research_async(topics or [], limit, min_comments, mode))
 
 
-async def _research_async(topics: list[str], limit: int, min_comments: int):
-    from app.desktop.permissions import check_all_permissions
-    from app.desktop.research_agent import DesktopXResearcher
+async def _research_async(topics: list[str], limit: int, min_comments: int, mode: str = "api"):
     from app.memory.sqlite_repo import count_references
 
     init_db()
-    check_all_permissions()
 
-    _banner("XAgent 调研启动", f"API 搜索 · 热度排序 · 实时保存 · 目标 {limit} 帖")
+    if mode == "visual":
+        from app.desktop.permissions import check_all_permissions
+        check_all_permissions()
+
+    mode_label = "纯 API" if mode == "api" else "视觉 + API"
+    _banner("XAgent 调研启动", f"{mode_label} · 热度排序 · 实时保存 · 目标 {limit} 帖")
 
     topic_cfg = load_yaml("configs/topics.yaml")
     if not topics:
@@ -196,16 +202,25 @@ async def _research_async(topics: list[str], limit: int, min_comments: int):
     plan = Table.grid(padding=(0, 1))
     plan.add_column("步骤", style=BRAND)
     plan.add_column("内容")
-    plan.add_row("1", "打开 Safari → 导航到 x.com")
-    plan.add_row("2", f"X API 搜索 {len(topics)} 个主题，按互动量排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
-    plan.add_row("3", f"逐个点开高热度帖子 → 正文/图片/API 评论({min_comments}+) → 权重打分")
+    if mode == "visual":
+        plan.add_row("1", "打开 Safari → 导航到 x.com")
+        plan.add_row("2", f"X API 搜索 {len(topics)} 个主题，按互动量排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
+        plan.add_row("3", f"逐个点开高热度帖子 → 正文/图片/API 评论({min_comments}+) → 权重打分")
+    else:
+        plan.add_row("1", f"X API 搜索 {len(topics)} 个主题，按互动量排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
+        plan.add_row("2", f"逐个采集帖子 → API 正文/评论({min_comments}+) → LLM 打分/摘要")
     plan.add_row("4", "实时保存: SQLite + 本地 MD + Notion（每帖立即保存）")
     plan.add_row("5", f"目标采集 {limit} 条")
     plan.add_row("6", "生成调研报告（带引用）: xagent report")
     console.print(Panel(plan, title="[bold]执行计划[/bold]", border_style=BRAND))
     console.print("")
 
-    researcher = DesktopXResearcher()
+    if mode == "api":
+        from app.research.api_researcher import APIXResearcher
+        researcher = APIXResearcher()
+    else:
+        from app.desktop.research_agent import DesktopXResearcher
+        researcher = DesktopXResearcher()
 
     console.print(f"[{BRAND}]▸ 开始 API 搜索 X 内容...[/]")
     posts = await researcher.discover(topics or None, target_posts=limit, min_comments=min_comments)

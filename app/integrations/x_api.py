@@ -1,4 +1,8 @@
-"""X (Twitter) API v2 client — search tweets, fetch replies, all via OAuth 1.0a.
+"""X (Twitter) API v2 client — search tweets, fetch replies.
+
+Authentication:
+  - Bearer Token (App-Only): for read-only endpoints (search, fetch replies)
+  - OAuth 1.0a: for user-context endpoints (post, like, follow, etc.)
 
 Uses curl via subprocess to avoid adding external dependencies.
 Keys are loaded from environment variables (X_API_* in .env).
@@ -23,6 +27,7 @@ CONSUMER_KEY = os.environ.get("X_API_CONSUMER_KEY", "")
 CONSUMER_SECRET = os.environ.get("X_API_CONSUMER_SECRET", "")
 ACCESS_TOKEN = os.environ.get("X_API_ACCESS_TOKEN", "")
 ACCESS_TOKEN_SECRET = os.environ.get("X_API_ACCESS_TOKEN_SECRET", "")
+BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN", "")
 
 
 @dataclass
@@ -100,12 +105,18 @@ def _oauth1_signature(method: str, url: str, params: dict) -> str:
     return "OAuth " + ", ".join(header_parts)
 
 
-def _make_request(url: str, params: dict) -> dict | None:
-    """Make an authenticated GET request to X API v2."""
+def _make_request(url: str, params: dict, use_bearer: bool = True) -> dict | None:
+    """Make an authenticated GET request to X API v2.
+
+    Prefers Bearer Token (App-Only) for read endpoints; falls back to OAuth 1.0a.
+    """
     query_string = urllib.parse.urlencode(params, safe="")
     full_url = f"{url}?{query_string}"
 
-    auth_header = _oauth1_signature("GET", url, params)
+    if use_bearer and BEARER_TOKEN:
+        auth_header = f"Bearer {BEARER_TOKEN}"
+    else:
+        auth_header = _oauth1_signature("GET", url, params)
 
     try:
         result = subprocess.run(
@@ -126,8 +137,22 @@ def _make_request(url: str, params: dict) -> dict | None:
             err = data["errors"][0]
             if err.get("code") == 88:
                 logger.warning("X API rate limited")
+            elif err.get("code") == 401 or "Unauthorized" in str(err.get("title", "")):
+                # Bearer failed, retry with OAuth 1.0a
+                if use_bearer and BEARER_TOKEN:
+                    logger.info("Bearer Token failed, retrying with OAuth 1.0a")
+                    return _make_request(url, params, use_bearer=False)
+                logger.warning("X API unauthorized")
             else:
                 logger.warning(f"X API error: {err.get('message', str(err))[:200]}")
+            return None
+
+        # Also handle top-level 401 (e.g. {"title": "Unauthorized", ...})
+        if isinstance(data, dict) and data.get("status") == 401:
+            if use_bearer and BEARER_TOKEN:
+                logger.info("Bearer Token failed, retrying with OAuth 1.0a")
+                return _make_request(url, params, use_bearer=False)
+            logger.warning("X API unauthorized")
             return None
 
         return data

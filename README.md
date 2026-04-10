@@ -1,24 +1,32 @@
 # XAgent
 
-X 平台视觉 AI 操作 Agent — 像真人一样操作你的 Mac，通过屏幕截图理解界面，用键鼠完成调研、发推、互动全流程。
+X 平台 AI 调研与操作 Agent — 纯 API 快速调研 + 视觉深度采集 + 发推互动。
 
-**核心能力**：X API 搜索发现 → 高热度排序 → 视觉深度采集 → 发推互动。纯视觉闭环 + API 加速。
+**核心能力**：X API 搜索发现 → 高热度排序 → 纯 API 快速采集 / 视觉深度采集 → 发推互动。
 
-**技术栈**：Qwen3.6-Plus（视觉）· X API v2（搜索发现）· PyAutoGUI（全局控制）· Notion API · SQLite · Rich CLI
+**技术栈**：Qwen3.6-Plus（视觉）· X API v2（Bearer Token + OAuth 1.0a）· PyAutoGUI（全局控制）· Notion API · SQLite · Rich CLI
 
 ---
 
 ## 快速上手
 
 ```bash
-# 1. 安装
+# 1. 创建虚拟环境并安装
+python3.13 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 
-# 2. 初始化项目
+# 2. 全局可用（可选）
+echo 'alias xagent="/Users/justyn/SightOps/xagent/.venv/bin/xagent"' >> ~/.zshrc
+source ~/.zshrc
+
+# 3. 初始化项目
 xagent setup
 
-# 3. 编辑 .env，填入 LLM API Key
+# 3. 编辑 .env，填入 LLM API Key 和 X API 凭证
 #    LLM_API_KEY=sk-xxx
+#    X_API_BEARER_TOKEN=xxx（纯 API 模式必需）
+#    X_API_CONSUMER_KEY=xxx（OAuth 1.0a，发推/互动必需）
 
 # 4. 开始调研
 xagent research "AI agent"
@@ -27,7 +35,10 @@ xagent research "AI agent"
 xagent status
 ```
 
-> **系统授权**：系统设置 → 隐私与安全性 → 屏幕录制 + 辅助功能 → 启用终端 → 重启 Terminal
+> 如果没有配置全局 alias，需要先 `source /Users/justyn/SightOps/xagent/.venv/bin/activate` 激活虚拟环境。
+```
+
+> **系统授权**：仅 `--mode visual` 需要（系统设置 → 隐私与安全性 → 屏幕录制 + 辅助功能 → 启用终端 → 重启 Terminal）。纯 API 模式无需任何权限。
 
 ---
 
@@ -36,7 +47,7 @@ xagent status
 | 命令 | 说明 |
 |------|------|
 | `xagent setup` | 初始化项目（首次使用）— 检查 Python/配置/权限/数据库 |
-| `xagent research "主题"` | X API 调研 — API 搜索 → 热度排序 → 深度采集 → 实时保存 MD + Notion |
+| `xagent research "主题"` | X 调研（默认纯 API，`--mode visual` 用视觉深度采集）→ 热度排序 → 实时保存 MD + Notion |
 | `xagent report "主题"` | 生成调研报告 — 基于权重排序的来源，带引用 |
 | `xagent analyze` | 爆款风格分析 — 对已采集内容做钩子/结构/叙事模式统计 |
 | `xagent write` | 根据调研生成草稿 — 提取风格 → 通用草稿 → 平台适配 |
@@ -59,27 +70,24 @@ xagent setup
 ### Step 1 — 调研
 
 ```bash
-# API 搜索，目标 50+ 帖子，每个帖子 10+ 评论
+# 纯 API 模式（默认，无需桌面权限）
 xagent research "AI agent" --limit 50 --min-comments 10
+
+# 视觉深度采集模式（需 macOS 权限，提取图片/完整正文）
+xagent research "AI agent" --mode visual
 
 # 使用 topics.yaml 默认关键词
 xagent research
 ```
 
-**API 调研流程**：
+**API 调研流程**（默认）：
 
 ```
-打开 Safari → x.com
-  ↓
 X API 搜索关键词 → 按互动量排序 (likes + reposts*1.5 + replies*2 + views*0.01)
   ↓
-用 URL 直接导航到高热度帖子
+逐个采集 → API 正文/指标/媒体 → API 获取评论(10+ 条，按赞排序)
   ↓
-逐一点开 → 提取正文/指标 → API 获取评论(10+ 条，按赞排序)
-  ↓
-有图片？点开分析
-  ↓
-相关性打分 → 摘要 + 标签
+LLM 相关性打分 → 摘要 + 标签
   ↓
 ★ 实时保存: SQLite + 本地 MD 文件 + Notion
   ↓
@@ -87,9 +95,9 @@ X API 搜索关键词 → 按互动量排序 (likes + reposts*1.5 + replies*2 + 
 ```
 
 每个帖子完整采集：
-- **正文**：完整文本 + 外部链接
-- **图片**：点击打开 → 视觉分析 → 提取洞察
-- **评论**：X API 获取 10+ 条，按点赞量排序（API 失败时视觉回退）
+- **正文**：API 直接获取完整文本 + 外部链接（visual 模式通过视觉提取）
+- **图片**：API 返回媒体 URL（visual 模式可视觉分析图片内容）
+- **评论**：X API 获取 10+ 条，按点赞量排序（visual 模式 API 失败时视觉回退）
 - **指标**：点赞/转发/评论/阅读/收藏
 - **链接**：API 直接提供精确 URL
 - **实时保存**：每帖立即保存到 SQLite + 本地 MD（`data/research_md/`）+ Notion
@@ -168,8 +176,9 @@ NOTION_RESEARCH_DB_ID=xxx
 NOTION_TEMPLATE_DB_ID=xxx
 NOTION_DRAFT_DB_ID=xxx
 
-# ── X API（可选，搜索发现更快更准）─
-X_API_CONSUMER_KEY=xxx
+# ── X API（纯 API 模式必需，视觉模式可选）─
+X_API_BEARER_TOKEN=xxx          # App-Only Auth，搜索/评论优先使用
+X_API_CONSUMER_KEY=xxx          # OAuth 1.0a，发推/点赞/关注等用户操作
 X_API_CONSUMER_SECRET=xxx
 X_API_ACCESS_TOKEN=xxx
 X_API_ACCESS_TOKEN_SECRET=xxx
@@ -244,8 +253,20 @@ writing:
 ### 研究流程
 
 ```
-DesktopXResearcher
-  ├── discover()      API 搜索 + 按热度排序 + 实时保存
+APIXResearcher（默认，--mode api）
+  └── discover()      API 搜索 + 按热度排序 + 实时保存
+        ├── X API v2 search_tweets()  Bearer Token 分页获取 50+ 帖子
+        ├── sort_by_engagement()      权重排序
+        ├── _collect_and_save_tweet()  逐个采集，实时保存
+        │     ├── 直接从 API Tweet 取正文/指标/媒体
+        │     ├── fetch_tweet_replies()    API 获取 10+ 评论，按赞排序
+        │     ├── LLM 相关性打分 + 摘要 + 标签
+        │     ├── save_content()           SQLite 保存
+        │     ├── save_content_to_md()     本地 MD 文件
+        │     └── sync_to_notion()         Notion 同步
+
+DesktopXResearcher（--mode visual）
+  ├── discover()      API 搜索 + 视觉深度采集 + 实时保存
   │     ├── X API v2 search_tweets()  分页获取 50+ 帖子
   │     ├── sort_by_engagement()      权重排序: likes + reposts*1.5 + replies*2 + views*0.01
   │     ├── _collect_and_save_tweet()  逐个采集，实时保存
@@ -293,6 +314,8 @@ app/
   core/              配置 · 错误 · 日志
   schemas/           数据模型
   llm/               LLM 客户端（OpenAI 兼容）
+  research/           纯 API 调研（无需浏览器/桌面权限）
+    api_researcher.py    API 调研 Agent
   desktop/           桌面级纯视觉控制
     computer_agent.py    核心 see-think-act-verify 循环
     executor.py          PyAutoGUI 执行器（人类化行为）
