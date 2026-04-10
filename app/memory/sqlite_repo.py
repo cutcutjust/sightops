@@ -101,6 +101,16 @@ def init_db() -> None:
                 created_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS comments (
+                content_id TEXT,
+                author TEXT,
+                text TEXT,
+                likes INTEGER DEFAULT 0,
+                url TEXT,
+                collected_at TEXT,
+                FOREIGN KEY (content_id) REFERENCES collected_content(content_id)
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
                 kind TEXT,
@@ -137,9 +147,89 @@ def save_content(c: CollectedContent) -> None:
                 json.dumps(c.comment_links),
             ),
         )
+        # Save comments to separate table
+        db.execute("DELETE FROM comments WHERE content_id = ?", (c.content_id,))
+        for cm in c.comments:
+            db.execute(
+                "INSERT INTO comments (content_id, author, text, likes, url, collected_at) VALUES (?,?,?,?,?,?)",
+                (c.content_id, cm.author, cm.text, cm.likes, cm.url, c.collected_at.isoformat()),
+            )
 
 
-def load_recent_content(platform: str = "x", days: int = 7) -> list[CollectedContent]:
+def load_collected_content(
+    platform: str = "x",
+    days: int = 7,
+    topic: str | None = None,
+) -> list[CollectedContent]:
+    """Load collected content, optionally filtered by topic keyword."""
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with _conn() as db:
+        if topic:
+            rows = db.execute(
+                "SELECT * FROM collected_content WHERE platform=? AND collected_at>=? "
+                "AND (body_text LIKE ? OR title LIKE ? OR tags LIKE ?)",
+                (platform, cutoff, f"%{topic}%", f"%{topic}%", f"%{topic}%"),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM collected_content WHERE platform=? AND collected_at>=? "
+                "ORDER BY relevance_score DESC",
+                (platform, cutoff),
+            ).fetchall()
+    return [_row_to_content(r) for r in rows]
+
+
+def save_content_to_md(c: CollectedContent) -> str:
+    """Save a single post to local MD file. Returns file path."""
+    s = get_settings()
+    md_dir = s.data_path / "research_md"
+    md_dir.mkdir(parents=True, exist_ok=True)
+
+    from slugify import slugify
+    safe_author = slugify(c.author or "unknown")
+    safe_title = slugify(c.title or c.body_text[:50])[:40]
+    filename = f"{safe_author}_{safe_title}.md"
+    filepath = md_dir / filename
+
+    lines = [
+        f"# @{c.author}",
+        f"",
+        f"> {c.source_url}",
+        f"> ❤ {c.metrics.likes} | 🔁 {c.metrics.reposts} | 💬 {len(c.comments)} | 👁 {c.metrics.views}",
+        f"> 相关性: {c.relevance_score:.1f}",
+        f"> 采集时间: {c.collected_at.strftime('%Y-%m-%d %H:%M')}",
+        f"",
+        f"## 正文",
+        f"",
+        c.body_text,
+    ]
+
+    if c.summary:
+        lines.extend(["", "## 摘要", "", c.summary])
+
+    if c.images:
+        lines.extend(["", "## 图片", ""])
+        for img in c.images:
+            lines.append(f"- {img}")
+
+    if c.comments:
+        top_comments = sorted(c.comments, key=lambda cm: cm.likes, reverse=True)
+        lines.extend(["", "## 热门评论", ""])
+        for cm in top_comments[:15]:
+            lines.append(f"- **@{cm.author or '?'}** (❤{cm.likes}): {cm.text}")
+
+    if c.tags:
+        lines.extend(["", f"## 标签", "", ", ".join(c.tags)])
+
+    content = "\n".join(lines)
+    filepath.write_text(content, encoding="utf-8")
+    return str(filepath)
+
+
+def load_content(platform: str = "x", days: int = 7) -> list[CollectedContent]:
+    """Alias for load_recent_content for backward compat."""
+    return load_recent_content(platform=platform, days=days)
     from datetime import timedelta
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
     with _conn() as db:
@@ -152,9 +242,9 @@ def load_recent_content(platform: str = "x", days: int = 7) -> list[CollectedCon
 
 
 def _row_to_content(r: sqlite3.Row) -> CollectedContent:
-    from app.schemas.content import Metrics
+    from app.schemas.content import Comment, Metrics
     keys = r.keys()
-    return CollectedContent(
+    content = CollectedContent(
         content_id=r["content_id"],
         platform=r["platform"],
         source_url=r["source_url"],
@@ -171,6 +261,17 @@ def _row_to_content(r: sqlite3.Row) -> CollectedContent:
         external_links=json.loads(r["external_links"] or "[]") if "external_links" in keys else [],
         comment_links=json.loads(r["comment_links"] or "[]") if "comment_links" in keys else [],
     )
+    # Load comments from separate table
+    with _conn() as db:
+        comment_rows = db.execute(
+            "SELECT * FROM comments WHERE content_id = ? ORDER BY likes DESC",
+            (content.content_id,),
+        ).fetchall()
+        content.comments = [
+            Comment(author=cr["author"], text=cr["text"], likes=cr["likes"], url=cr["url"])
+            for cr in comment_rows
+        ]
+    return content
 
 
 # ── Research References ───────────────────────────────────────────────────────

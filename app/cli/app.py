@@ -171,13 +171,14 @@ def observe(
 @cli.command()
 def research(
     topics: list[str] = typer.Argument(None, help="搜索主题（默认用 topics.yaml）"),
-    limit: int = typer.Option(60, "--limit", "-n", help="最多采集帖子数"),
+    limit: int = typer.Option(50, "--limit", "-n", help="目标采集帖子数（默认50）"),
+    min_comments: int = typer.Option(10, "--min-comments", "-c", help="每个帖子最少评论数（默认10）"),
 ):
-    """全屏视觉调研 — 像真人一样操作电脑。"""
-    asyncio.run(_research_async(topics or [], limit))
+    """X API 调研 — 搜索 → 热度排序 → 深度采集 → 实时保存 MD + Notion。"""
+    asyncio.run(_research_async(topics or [], limit, min_comments))
 
 
-async def _research_async(topics: list[str], limit: int):
+async def _research_async(topics: list[str], limit: int, min_comments: int):
     from app.desktop.permissions import check_all_permissions
     from app.desktop.research_agent import DesktopXResearcher
     from app.memory.sqlite_repo import count_references
@@ -185,7 +186,7 @@ async def _research_async(topics: list[str], limit: int):
     init_db()
     check_all_permissions()
 
-    _banner("全屏调研启动", "像真人一样操作电脑 · 每条实时记录")
+    _banner("XAgent 调研启动", f"API 搜索 · 热度排序 · 实时保存 · 目标 {limit} 帖")
 
     topic_cfg = load_yaml("configs/topics.yaml")
     if not topics:
@@ -196,20 +197,26 @@ async def _research_async(topics: list[str], limit: int):
     plan.add_column("步骤", style=BRAND)
     plan.add_column("内容")
     plan.add_row("1", "打开 Safari → 导航到 x.com")
-    plan.add_row("2", f"X API 搜索 {len(topics)} 个主题，按热度排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
-    plan.add_row("3", "逐一点开高热度帖子 → 正文 → 图片 → 评论 → 指标")
-    plan.add_row("4", "Notion 同步保存")
-    plan.add_row("5", f"最多采集 {limit} 条")
+    plan.add_row("2", f"X API 搜索 {len(topics)} 个主题，按互动量排序: {', '.join(topics[:5])}{'...' if len(topics) > 5 else ''}")
+    plan.add_row("3", f"逐个点开高热度帖子 → 正文/图片/API 评论({min_comments}+) → 权重打分")
+    plan.add_row("4", "实时保存: SQLite + 本地 MD + Notion（每帖立即保存）")
+    plan.add_row("5", f"目标采集 {limit} 条")
+    plan.add_row("6", "生成调研报告（带引用）: xagent report")
     console.print(Panel(plan, title="[bold]执行计划[/bold]", border_style=BRAND))
     console.print("")
 
     researcher = DesktopXResearcher()
 
-    console.print(f"[{BRAND}]▸ 开始搜索 X 内容...[/]")
-    posts = await researcher.discover(topics or None)
+    console.print(f"[{BRAND}]▸ 开始 API 搜索 X 内容...[/]")
+    posts = await researcher.discover(topics or None, target_posts=limit, min_comments=min_comments)
     if not posts:
         console.print(f"[{WARN}]未发现相关帖子[/]")
         return
+
+    # Summary
+    avg_score = sum(p.get("engagement_score", 0) for p in posts) / len(posts) if posts else 0
+    total_likes = sum(p.get("likes", 0) for p in posts)
+    total_comments = sum(p.get("replies", 0) for p in posts)
 
     total_refs, collected_refs = count_references("x")
 
@@ -219,10 +226,50 @@ async def _research_async(topics: list[str], limit: int):
     summary.add_column("指标", style=BRAND)
     summary.add_column("值", style="bold")
     summary.add_row("帖子深度采集", str(len(posts)))
+    summary.add_row("总互动量", f"❤{total_likes} 💬{total_comments}")
+    summary.add_row("平均权重分", f"{avg_score:.0f}")
     summary.add_row("总引用记录", str(total_refs))
-    summary.add_row("已采集", str(collected_refs))
+    summary.add_row("已深度采集", str(collected_refs))
     summary.add_row("已浏览/跳过", str(total_refs - collected_refs))
     console.print(Panel(summary, title="[bold green]调研完成[/bold green]", border_style="green"))
+    console.print("")
+    console.print(f"  [dim]生成报告: [bold white]xagent report \"你的主题\"[/bold white][/dim]")
+    console.print("")
+
+
+# ── report ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+def report(
+    topic: str = typer.Argument("", help="报告主题"),
+    report_type: str = typer.Option("research", "--type", "-t", help="research | article | summary"),
+    days: int = typer.Option(7, "--days", "-d", help="加载最近 N 天的数据"),
+):
+    """基于采集的帖子生成调研报告（带引用）。"""
+    asyncio.run(_report_async(topic, report_type, days))
+
+
+async def _report_async(topic: str, report_type: str, days: int):
+    init_db()
+
+    _banner("生成调研报告", f"主题: {topic} · 类型: {report_type} · 最近 {days} 天")
+
+    from app.analysis.report import generate_report, save_report_to_file
+
+    console.print(f"    [{BRAND}]▶[/] 生成报告中...")
+    markdown = await generate_report(topic, days=days, report_type=report_type)
+
+    if not markdown.startswith("#"):
+        console.print(f"[{WARN}]{markdown}[/]")
+        return
+
+    filepath = save_report_to_file(markdown, topic)
+    console.print(f"    [{ACCENT}]✓ 报告已保存: {filepath}[/{ACCENT}]")
+    console.print("")
+
+    # Show preview
+    preview = markdown[:800] + ("..." if len(markdown) > 800 else "")
+    console.print(Panel(preview, title=f"[bold]{topic} — 预览[/bold]", border_style=ACCENT))
     console.print("")
 
 

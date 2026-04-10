@@ -36,7 +36,8 @@ xagent status
 | 命令 | 说明 |
 |------|------|
 | `xagent setup` | 初始化项目（首次使用）— 检查 Python/配置/权限/数据库 |
-| `xagent research "主题"` | X 调研 — API 搜索 → 热度排序 → 逐一点开 → 正文/图片/评论/指标 → Notion 同步 |
+| `xagent research "主题"` | X API 调研 — API 搜索 → 热度排序 → 深度采集 → 实时保存 MD + Notion |
+| `xagent report "主题"` | 生成调研报告 — 基于权重排序的来源，带引用 |
 | `xagent analyze` | 爆款风格分析 — 对已采集内容做钩子/结构/叙事模式统计 |
 | `xagent write` | 根据调研生成草稿 — 提取风格 → 通用草稿 → 平台适配 |
 | `xagent publish` | 发布草稿到 X — 纯视觉操作 |
@@ -58,42 +59,58 @@ xagent setup
 ### Step 1 — 调研
 
 ```bash
-# 搜索关键词
-xagent research "AI agent" "vibe coding" --limit 20
+# API 搜索，目标 50+ 帖子，每个帖子 10+ 评论
+xagent research "AI agent" --limit 50 --min-comments 10
 
 # 使用 topics.yaml 默认关键词
 xagent research
 ```
 
-**深度调研流程**：
+**API 调研流程**：
 
 ```
 打开 Safari → x.com
   ↓
-X API 搜索关键词 → 按热度排序 (likes/reposts/replies/views)
+X API 搜索关键词 → 按互动量排序 (likes + reposts*1.5 + replies*2 + views*0.01)
   ↓
 用 URL 直接导航到高热度帖子
   ↓
-逐一点开 → 聚焦浏览器 → 提取正文/指标
+逐一点开 → 提取正文/指标 → API 获取评论(10+ 条，按赞排序)
   ↓
-有图片？点开分析 · 有评论？滚动读取
+有图片？点开分析
   ↓
-相关性打分 → 摘要 + 标签 → 保存 SQLite
+相关性打分 → 摘要 + 标签
   ↓
-同步 Notion → 下一个帖子
+★ 实时保存: SQLite + 本地 MD 文件 + Notion
   ↓
-API 搜索下一个主题
+下一个帖子 → 直到目标数量
 ```
 
 每个帖子完整采集：
 - **正文**：完整文本 + 外部链接
 - **图片**：点击打开 → 视觉分析 → 提取洞察
-- **评论**：3 轮滚动 → 提取评论内容 + 点赞数
+- **评论**：X API 获取 10+ 条，按点赞量排序（API 失败时视觉回退）
 - **指标**：点赞/转发/评论/阅读/收藏
-- **链接**：分享按钮 → Copy Link → 精确 URL
-- **Notion 同步**：自动同步到 Research 数据库
+- **链接**：API 直接提供精确 URL
+- **实时保存**：每帖立即保存到 SQLite + 本地 MD（`data/research_md/`）+ Notion
+- **权重打分**：likes + reposts*1.5 + replies*2 + views*0.01
 
 > **紧急终止**：鼠标移到屏幕左上角（PyAutoGUI FAILSAFE）
+
+### Step 1.5 — 生成报告
+
+```bash
+# 生成调研报告（带引用）
+xagent report "AI Agent 趋势"
+
+# 生成文章
+xagent report "AI Agent 趋势" --type article
+
+# 生成摘要
+xagent report "AI Agent 趋势" --type summary
+```
+
+基于权重排序的来源（按互动量加载到提示词），生成的报告包含引用标注：`[来源N]（@用户名，❤赞数）`。
 
 ### Step 2 — 分析
 
@@ -228,19 +245,30 @@ writing:
 
 ```
 DesktopXResearcher
-  ├── discover()      API 搜索 + 按热度排序 + 视觉深度采集
-  │     ├── X API v2 搜索关键词，分页获取
-  │     ├── sort_by_engagement() 按互动量排序
-  │     ├── _deep_collect_api_tweets()  用 URL 直接导航到帖子
-  │     │     ├── _focus_browser()      确保浏览器窗口聚焦
-  │     │     ├── _extract_post_content()  视觉提取正文/指标
-  │     │     ├── _copy_post_url()      分享按钮 → Copy Link
-  │     │     ├── _analyze_images()     点击打开图片 → 视觉分析
-  │     │     ├── _read_comments()      3 轮滚动 → 提取评论
-  │     │     ├── _find_metrics()       滚动查找隐藏指标
-  │     │     └── _sync_to_notion()     同步到 Notion
-  │     └── 回退方案：API 失败时 → 视觉搜索
-  └── _go_back()       返回上一页
+  ├── discover()      API 搜索 + 按热度排序 + 实时保存
+  │     ├── X API v2 search_tweets()  分页获取 50+ 帖子
+  │     ├── sort_by_engagement()      权重排序: likes + reposts*1.5 + replies*2 + views*0.01
+  │     ├── _collect_and_save_tweet()  逐个采集，实时保存
+  │     │     ├── _collect_post_content()  视觉提取正文/指标
+  │     │     ├── fetch_tweet_replies()    API 获取 10+ 评论，按赞排序
+  │     │     ├── _analyze_images()        点击打开图片 → 视觉分析
+  │     │     ├── save_content()           SQLite 保存（含评论表）
+  │     │     ├── save_content_to_md()     本地 MD 文件（data/research_md/）
+  │     │     └── _sync_to_notion()        Notion 同步
+  │     └── 回退方案：API 评论失败 → 视觉评论
+  └── _go_back()       返回
+```
+
+### 报告生成
+
+```
+generate_report(topic)
+  ├── load_collected_content()   加载最近 N 天数据
+  ├── 按 engagement_score 排序   likes + reposts*1.5 + replies*2 + views*0.01
+  ├── 构建提示词                 Top 20 来源 + 评论 + 引用标注
+  ├── LLM 生成报告               3 种类型: research / article / summary
+  ├── save_report_to_file()      本地 MD 文件（data/reports/）
+  └── 引用格式                   [来源N]（@用户名，❤赞数）
 ```
 
 ### 数据流
