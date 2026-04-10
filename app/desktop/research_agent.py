@@ -1,4 +1,4 @@
-"""桌面级 X 调研 Agent — 纯视觉闭环：ComputerAgent 控制一切。"""
+"""桌面级 X 调研 Agent — API 发现 + 纯视觉深度采集。"""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +18,7 @@ console = Console()
 
 
 class DesktopXResearcher:
-    """全屏视觉调研 X — 深度采集：看帖子、点图片、读评论。"""
+    """X 调研 — API 搜索发现 + 视觉深度采集（正文/图片/评论/指标）。"""
 
     def __init__(self):
         self._collected_urls: set[str] = set()
@@ -27,7 +27,7 @@ class DesktopXResearcher:
     # ── 主流程 ────────────────────────────────────────────────────────
 
     async def discover(self, topics: list[str] | None = None) -> list[dict]:
-        """搜索 X 并返回帖子来源列表。"""
+        """X API 搜索发现 + 视觉深度采集。"""
         cfg = load_yaml("configs/app.yaml")
         r = cfg["research"]
         topics_per_run = r.get("topics_per_run", 10)
@@ -43,14 +43,14 @@ class DesktopXResearcher:
         console.print("[cyan]打开浏览器，导航到 x.com...[/cyan]")
         try:
             await self.agent.run(
-                "Focus Safari with Cmd+Tab. If Safari isn't visible, use Cmd+Space to open it. Then Cmd+L to focus address bar, type x.com, press Enter.",
+                "Focus Safari with Cmd+Tab. If Safari isn't visible, use Cmd+Space to open it. Then Cmd+L to focus address bar, type x.com, press Enter. STOP once x.com is loaded — do NOT search or click anything.",
                 context={"target_url": "x.com", "browser": "Safari"},
                 plan_context={
                     "overall_goal": f"调研 {len(topics)} 个主题的相关帖子",
                     "current_step": "Step 1/4: 打开浏览器导航到 x.com",
                     "completed_steps": [],
                     "next_steps": [
-                        f"Step 2: 搜索主题 ({', '.join(topics[:3])}{'...' if len(topics) > 3 else ''})",
+                        f"Step 2: API 搜索主题 ({', '.join(topics[:3])}{'...' if len(topics) > 3 else ''})",
                         "Step 3: 逐一点开帖子 → 正文/图片/评论/指标",
                         "Step 4: Notion 同步保存",
                     ],
@@ -60,34 +60,50 @@ class DesktopXResearcher:
             console.print(f"[yellow]导航到 X 时遇到问题: {e}[/yellow]")
             return []
 
-        # 2. 搜索每个主题
+        # 2. 用 X API 搜索每个主题，按热度排序
         for topic in topics[:topics_per_run]:
-            console.print(f"[cyan]搜索: {topic}[/cyan]")
+            console.print(f"[cyan]API 搜索: {topic}[/cyan]")
 
-            # 用 ComputerAgent 执行搜索
             try:
-                await self.agent.run(
-                    f"On X (Twitter), find the search box, type '{topic}', press Enter, and wait for search results to load.",
-                    context={"search_query": topic},
-                    plan_context={
-                        "overall_goal": f"调研 {len(topics)} 个主题的相关帖子",
-                        "current_step": f"Step 2/4: 搜索 '{topic}'",
-                        "completed_steps": ["Step 1: 打开浏览器导航到 x.com ✓"],
-                        "next_steps": [
-                            f"Step 3: 搜索 '{topic}' 的结果中逐一点开帖子深度采集",
-                            "Step 4: Notion 同步保存",
-                        ],
-                    },
-                )
+                from app.integrations.x_api import search_tweets, sort_by_engagement
+
+                tweets = search_tweets(topic, max_results=posts_per_topic, sort_order="relevancy")
+                if not tweets:
+                    console.print(f"    [yellow]API 未返回结果，回退到视觉搜索[/yellow]")
+                    try:
+                        await self.agent.run(
+                            f"On X, find the search box, type '{topic}', press Enter, and wait for results.",
+                            context={"search_query": topic},
+                            plan_context={
+                                "overall_goal": f"调研 {len(topics)} 个主题的相关帖子",
+                                "current_step": f"Step 2/4: 视觉搜索 '{topic}'",
+                                "completed_steps": ["Step 1: 打开浏览器导航到 x.com ✓"],
+                                "next_steps": ["Step 3: 逐一点开帖子深度采集", "Step 4: Notion 同步"],
+                            },
+                            max_cycles=5,
+                        )
+                    except Exception:
+                        pass
+                    batch = await self._scroll_and_extract_posts(topic, max_posts=posts_per_topic)
+                    all_posts.extend(batch)
+                    continue
+
+                # 按互动量排序
+                tweets = sort_by_engagement(tweets)
+                console.print(f"    [dim]API 返回 {len(tweets)} 条，按热度排序[/dim]")
+
+                # 聚焦浏览器窗口（确保后续点击有效）
+                await self._focus_browser()
+
+                # 用视觉逐个点开 API 发现的高热度帖子
+                batch = await self._deep_collect_api_tweets(tweets, max_posts=posts_per_topic)
+                all_posts.extend(batch)
+                console.print(f"  [dim]找到 {len(batch)} 个帖子来源[/dim]")
+                await asyncio.sleep(random.uniform(1, 3))
+
             except Exception as e:
                 console.print(f"    [yellow]搜索失败: {e}[/yellow]")
                 continue
-
-            # 深度滚动并提取帖子
-            batch = await self._scroll_and_extract_posts(topic, max_posts=posts_per_topic)
-            all_posts.extend(batch)
-            console.print(f"  [dim]找到 {len(batch)} 个帖子来源[/dim]")
-            await asyncio.sleep(random.uniform(1, 3))
 
         # 去重
         seen = set()
@@ -210,6 +226,81 @@ class DesktopXResearcher:
 
         console.print(f"  [dim]共发现 {len(posts_found)} 个帖子，已深度采集[/dim]")
         return posts_found[:max_posts]
+
+    async def _deep_collect_api_tweets(self, tweets, max_posts: int = 20) -> list[dict]:
+        """用视觉点击 API 发现的高热度帖子，深度采集。"""
+        console.print("[cyan]深度调研开始 — 逐一点开 API 发现的高热度帖子...[/cyan]")
+        posts_found: list[dict] = []
+        collected_ids: set[str] = set()
+
+        for tweet in tweets:
+            if len(posts_found) >= max_posts:
+                break
+            if tweet.id in collected_ids:
+                continue
+
+            console.print(f"    [dim]采集: @{tweet.author_username} ❤{tweet.likes} 👁{tweet.views} — {tweet.text[:60]}...[/dim]")
+
+            # 在 X 页面中导航到这个帖子
+            try:
+                await self.agent.run(
+                    f"Navigate to this tweet URL. Use Cmd+L to focus address bar, type or paste: {tweet.url}",
+                    context={"tweet_url": tweet.url, "author": tweet.author_username, "text_preview": tweet.text[:60]},
+                    plan_context={
+                        "overall_goal": f"深度采集高热度帖子 (API 发现)",
+                        "current_step": f"导航到 @{tweet.author_username} 的帖子 (❤{tweet.likes} 👁{tweet.views})",
+                        "completed_steps": [f"API 搜索并排序，找到 {len(tweets)} 条结果"],
+                        "next_steps": [
+                            "提取帖子正文和指标",
+                            "分析图片（如有）",
+                            "读取评论",
+                            "相关性打分 → 保存 → Notion 同步",
+                        ],
+                    },
+                    max_cycles=10,
+                )
+            except Exception as e:
+                logger.warning(f"导航到 @{tweet.author_username} 失败: {e}")
+                continue
+
+            await asyncio.sleep(2)
+
+            # 深度采集这个帖子
+            post_info = {
+                "author": tweet.author_username,
+                "text_preview": tweet.text[:80],
+                "topic": "",
+                "api_tweet_id": tweet.id,
+                "api_url": tweet.url,
+                "has_image": bool(tweet.media),
+            }
+
+            try:
+                result = await self._deep_collect_from_search(post_info)
+                if result:
+                    posts_found.append({
+                        "author": tweet.author_username,
+                        "text_preview": tweet.text[:80],
+                        "likes": tweet.likes,
+                        "views": tweet.views,
+                        "reposts": tweet.reposts,
+                        "replies": tweet.replies,
+                    })
+                    collected_ids.add(tweet.id)
+                    console.print(
+                        f"    [green]✓ @{tweet.author_username} 已保存 "
+                        f"❤{result.metrics.likes} 🔁{result.metrics.reposts} "
+                        f"💬{len(result.comments)} 👁{result.metrics.views} "
+                        f"🖼{len(result.images)}[/green]"
+                    )
+            except Exception as e:
+                logger.warning(f"深度采集 @{tweet.author_username} 失败: {e}")
+                await self._go_back()
+
+            await asyncio.sleep(random.uniform(1, 2))
+
+        console.print(f"  [dim]共深度采集 {len(posts_found)} 个 API 帖子[/dim]")
+        return posts_found
 
     async def _deep_collect_from_search(self, post_info: dict) -> CollectedContent | None:
         """从搜索结果页点进帖子，深度采集正文、图片、评论、指标，然后返回。"""
