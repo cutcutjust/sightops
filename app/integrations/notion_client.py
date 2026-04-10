@@ -34,7 +34,7 @@ async def save_research(content: CollectedContent) -> str:
 
     client = _get_client()
     props: dict[str, Any] = {
-        "Name": {"title": [{"text": {"content": content.title or content.source_url[:80]}}]},
+        "名称": {"title": [{"text": {"content": content.title or content.source_url[:80]}}]},
         "Platform": {"select": {"name": content.platform}},
         "URL": {"url": content.source_url},
         "Relevance": {"number": content.relevance_score},
@@ -49,7 +49,7 @@ async def save_research(content: CollectedContent) -> str:
     children = _build_content_blocks(content)
 
     # Try full save first, then minimal fallback if properties don't match
-    for attempt_props in [props, {"Name": {"title": [{"text": {"content": content.source_url[:80]}}]}}]:
+    for attempt_props in [props, {"名称": {"title": [{"text": {"content": content.source_url[:80]}}]}}]:
         try:
             resp = await client.pages.create(
                 parent={"database_id": db_id},
