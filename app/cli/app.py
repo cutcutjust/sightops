@@ -217,9 +217,9 @@ async def _clarify_topics(topics: list[str]) -> dict:
         console.print("")
 
         # 提示用户
-        console.print(f"    [dim]输入编号选择方向，多个用逗号分隔，0=全部")
-        console.print(f"    补充说明可进一步缩小范围，如「只关注 Claude 模型发布」")
-        console.print(f"    输入 ok 确认当前方向开始调研[/dim]")
+        console.print("    [dim]输入编号选择方向，多个用逗号分隔，0=全部[/dim]")
+        console.print("    [dim]补充说明可进一步缩小范围，如「只关注 Claude 模型发布」[/dim]")
+        console.print("    [dim]输入 ok 确认当前方向开始调研[/dim]")
         choice = typer.prompt("    选择", default="0")
         choice = choice.strip()
 
