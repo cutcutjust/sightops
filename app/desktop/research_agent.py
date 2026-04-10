@@ -57,7 +57,7 @@ class DesktopXResearcher:
             # 用 ComputerAgent 执行搜索
             try:
                 await self.agent.run(
-                    f"On X (Twitter), find the search box, type '{topic}', press Enter, and wait for search results to load.",
+                    f"On X (Twitter), find the search box, type '{topic}', press Enter, and wait for search results to load. Search for the exact keyword '{topic}' — do NOT use 'from:' prefix, just type the keyword directly.",
                     context={"search_query": topic},
                 )
             except Exception as e:
@@ -205,7 +205,8 @@ class DesktopXResearcher:
             obs = await observe_desktop(f"重新提取帖子内容")
             post_data = await self._extract_post_content(obs.screenshot_path, author)
             if not post_data:
-                return self._go_back()
+                await self._go_back()
+                return None
 
         content_id = f"x:{author}:{preview[:40]}"
         source_url = post_data.get("source_url", f"https://x.com/{author}")
@@ -252,7 +253,8 @@ class DesktopXResearcher:
         if score < threshold:
             console.print(f"    [dim]跳过 (score={score:.1f})[/dim]")
             save_reference(content.source_url, "x", source="search", was_collected=False)
-            return self._go_back()
+            await self._go_back()
+            return None
 
         # Step 7: 摘要 + 标签
         content.summary = await self._summarize(content)
@@ -278,7 +280,8 @@ class DesktopXResearcher:
         await self._sync_to_notion(content)
 
         # 返回搜索页
-        return self._go_back()
+        await self._go_back()
+        return content
 
     async def _find_metrics(self, content: CollectedContent) -> None:
         """滚动帖子页面查找隐藏的互动指标。"""

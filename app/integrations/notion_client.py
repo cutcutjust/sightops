@@ -48,17 +48,23 @@ async def save_research(content: CollectedContent) -> str:
 
     children = _build_content_blocks(content)
 
-    try:
-        resp = await client.pages.create(
-            parent={"database_id": db_id},
-            properties=props,
-            children=children,
-        )
-        page_id = resp["id"]
-        logger.info(f"Notion page created: {page_id}")
-        return page_id
-    except Exception as e:
-        raise NotionError(f"Failed to create Notion page: {e}") from e
+    # Try full save first, then minimal fallback if properties don't match
+    for attempt_props in [props, {"Name": {"title": [{"text": {"content": content.source_url[:80]}}]}}]:
+        try:
+            resp = await client.pages.create(
+                parent={"database_id": db_id},
+                properties=attempt_props,
+                children=children,
+            )
+            page_id = resp["id"]
+            logger.info(f"Notion page created: {page_id}")
+            return page_id
+        except Exception as e:
+            if attempt_props is props:
+                logger.warning(f"Notion full save failed, retrying with minimal properties: {e}")
+                continue
+            raise NotionError(f"Failed to create Notion page: {e}") from e
+    return ""
 
 
 async def save_draft(draft: UniversalDraft, platform_draft: PlatformDraft) -> str:

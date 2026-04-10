@@ -55,6 +55,13 @@ Think like a researcher, not a robot. Don't follow a rigid script.
 4. **Explore thoroughly** — for X posts: check replies count, scroll through comments, click images, check retweets/quotes, note view counts.
 5. **Be persistent but not stuck** — if something doesn't work after 2 tries, try a different method.
 
+## X Search Rules
+- When searching for a user's posts, do NOT use "from:username" — just type the username directly (e.g., "Ox_Miko")
+- When searching for topics, just type the keyword (e.g., "mythos")
+- After searching, look for the target post in the results. If not visible, scroll down to find it
+- When asked to find a specific post by @username, look for posts matching that author in the visible results
+- Only return "done" when you have ACTUALLY completed the task (e.g., clicked and opened the target post). Do NOT return "done" just because you searched — the post must be visible and opened
+
 ## Opening Applications — ALWAYS Use Spotlight
 To open or switch to an application, use Cmd+Space then type the app name:
 1. hotkey: keys=["command", "space"] — open Spotlight
@@ -404,11 +411,14 @@ class ComputerAgent:
         if not plan.steps:
             return False
         current_action = plan.steps[0].action.value
+        # Scroll and wait are exploration actions, don't count as stuck
+        if current_action in ("scroll", "wait"):
+            return False
         current_desc = plan.steps[0].description or ''
         # Count how many times this action type appeared in history
         type_count = sum(1 for a in self._last_actions if a.startswith(f"{current_action}:"))
-        # Need at least 5 repeated same action type to be considered stuck
-        if type_count >= max(self.max_stuck_cycles, 5):
+        # Need at least 8 repeated same action type to be considered stuck
+        if type_count >= max(self.max_stuck_cycles, 8):
             return True
         # Also check if confidence is low AND recent failures are high
         if plan.confidence < 0.3 and len(self._history) > 10:
@@ -425,28 +435,34 @@ import re as _re
 
 def _normalize_step(step: PlannedAction) -> None:
     """Fix common LLM output issues: coords in description, text in wrong field."""
+    if not step.description:
+        return
     # Fix 1: Extract coords from description like "(476, 133)" or "(476,133)"
-    if step.x is None and step.y is None and step.description:
+    if step.x is None and step.y is None:
         m = _re.search(r'\((\d+)\s*,\s*(\d+)\)', step.description)
         if m:
             step.x = int(m.group(1))
             step.y = int(m.group(2))
     # Fix 2: Extract quoted text from description for type_text
-    if step.action == ActionType.TYPE_TEXT and not step.text and step.description:
+    if step.action == ActionType.TYPE_TEXT and not step.text:
+        # Try double quotes first
         m = _re.search(r'"([^"]+)"', step.description)
+        if not m:
+            # Try single quotes
+            m = _re.search(r"'([^']+)'", step.description)
         if m:
             step.text = m.group(1)
-    # Fix 3: Extract keys from description like "return" or "enter"
-    if step.action == ActionType.HOTKEY and not step.keys and step.description:
+    # Fix 3: Extract keys from description for hotkey
+    if step.action == ActionType.HOTKEY and not step.keys:
         desc = step.description.lower().strip()
-        if 'return' in desc or 'enter' in desc:
-            step.keys = ['return']
-        elif 'escape' in desc or 'esc' in desc:
-            step.keys = ['escape']
-        elif 'down' in desc:
-            step.keys = ['down']
-        elif 'up' in desc:
-            step.keys = ['up']
+        for kw, key in [('return', 'return'), ('enter', 'return'), ('escape', 'escape'),
+                         ('esc', 'escape'), ('down', 'down'), ('up', 'up'),
+                         ('left', 'left'), ('right', 'right'), ('tab', 'tab'),
+                         ('command+l', 'command'), ('cmd+l', 'command'),
+                         ('space', 'space'), ('delete', 'delete'), ('backspace', 'backspace')]:
+            if kw in desc:
+                step.keys = [key] if key != 'command' else ['command', 'l']
+                break
 
 
 def _extract_json(text: str) -> str:
