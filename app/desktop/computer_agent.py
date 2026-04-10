@@ -172,16 +172,21 @@ class ComputerAgent:
         if plan.steps:
             for i, step in enumerate(plan.steps, 1):
                 detail = f"[{step.action.value}]"
+                # Coords from x/y fields
                 if step.x is not None and step.y is not None:
                     detail += f" ({int(step.x)}, {int(step.y)})"
+                # Coords from description field (LLM sometimes writes "(x, y)" there)
+                elif step.description and step.description.startswith("("):
+                    detail += f" {step.description[:20]}"
                 if step.text:
                     detail += f" \"{step.text[:40]}{'...' if len(step.text) > 40 else ''}\""
                 if step.keys:
-                    detail += f" +".join(step.keys)
+                    detail += f" {'+'.join(step.keys)}"
                 if step.direction:
                     detail += f" {step.direction}x{step.amount or 5}"
-                if step.description:
-                    desc = step.description[:60] + "..." if len(step.description) > 60 else step.description
+                # Reason (not description) for the reason field
+                if step.reason:
+                    desc = step.reason[:60] + "..." if len(step.reason) > 60 else step.reason
                     detail += f" — {desc}"
                 self._log(f"  计划 {i}: {detail}", "bold yellow")
 
@@ -359,13 +364,18 @@ class ComputerAgent:
         try:
             data = json.loads(_extract_json(raw))
             if "steps" in data:
-                return ActionPlan(**data)
-            if "plan" in data:
-                return ActionPlan(**data["plan"])
-            return ActionPlan(
-                steps=[], confidence=data.get("confidence", 0.0),
-                notes=json.dumps(data, ensure_ascii=False)[:500],
-            )
+                plan = ActionPlan(**data)
+            elif "plan" in data:
+                plan = ActionPlan(**data["plan"])
+            else:
+                return ActionPlan(
+                    steps=[], confidence=data.get("confidence", 0.0),
+                    notes=json.dumps(data, ensure_ascii=False)[:500],
+                )
+            # Normalize steps: fix LLM putting coords in description instead of x/y
+            for step in plan.steps:
+                _normalize_step(step)
+            return plan
         except Exception as e:
             logger.warning(f"[ComputerAgent] Plan parse error: {e}")
             return ActionPlan(
@@ -395,23 +405,49 @@ class ComputerAgent:
             return False
         current_action = plan.steps[0].action.value
         current_desc = plan.steps[0].description or ''
-        # Count how many times this action type + description appeared
-        pattern = f"{current_action}:{current_desc}"
-        matches = sum(1 for a in self._last_actions if a.startswith(f"{current_action}:"))
-        if matches >= self.max_stuck_cycles:
-            return True
-        # Also detect repeated action type even with different descriptions
+        # Count how many times this action type appeared in history
         type_count = sum(1 for a in self._last_actions if a.startswith(f"{current_action}:"))
-        if type_count >= self.max_stuck_cycles + 2:
+        # Need at least 5 repeated same action type to be considered stuck
+        if type_count >= max(self.max_stuck_cycles, 5):
             return True
+        # Also check if confidence is low AND recent failures are high
         if plan.confidence < 0.3 and len(self._history) > 10:
             recent_fails = sum(1 for h in self._history[-10:] if "FAIL" in h)
-            if recent_fails >= 3:
+            if recent_fails >= 4:
                 return True
         return False
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+import re as _re
+
+
+def _normalize_step(step: PlannedAction) -> None:
+    """Fix common LLM output issues: coords in description, text in wrong field."""
+    # Fix 1: Extract coords from description like "(476, 133)" or "(476,133)"
+    if step.x is None and step.y is None and step.description:
+        m = _re.search(r'\((\d+)\s*,\s*(\d+)\)', step.description)
+        if m:
+            step.x = int(m.group(1))
+            step.y = int(m.group(2))
+    # Fix 2: Extract quoted text from description for type_text
+    if step.action == ActionType.TYPE_TEXT and not step.text and step.description:
+        m = _re.search(r'"([^"]+)"', step.description)
+        if m:
+            step.text = m.group(1)
+    # Fix 3: Extract keys from description like "return" or "enter"
+    if step.action == ActionType.HOTKEY and not step.keys and step.description:
+        desc = step.description.lower().strip()
+        if 'return' in desc or 'enter' in desc:
+            step.keys = ['return']
+        elif 'escape' in desc or 'esc' in desc:
+            step.keys = ['escape']
+        elif 'down' in desc:
+            step.keys = ['down']
+        elif 'up' in desc:
+            step.keys = ['up']
+
 
 def _extract_json(text: str) -> str:
     """Extract JSON from LLM response."""
