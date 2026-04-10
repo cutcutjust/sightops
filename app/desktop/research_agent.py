@@ -199,7 +199,10 @@ class DesktopXResearcher:
         topic = post_info.get("topic", "")
         threshold = load_yaml("configs/app.yaml")["research"].get("relevance_threshold", 3.0)
 
-        # Step 1: 点击帖子
+        # Step 1: 聚焦浏览器窗口
+        await self._focus_browser()
+
+        # Step 2: 点击帖子
         try:
             await self.agent.run(
                 f"Click on the visible post by @{author} to open its detail page. Look for the author name and post text that match.",
@@ -211,7 +214,7 @@ class DesktopXResearcher:
 
         await asyncio.sleep(2)
 
-        # Step 2: 提取帖子内容
+        # Step 3: 提取帖子内容
         obs = await observe_desktop(f"提取帖子内容")
         post_data = await self._extract_post_content(obs.screenshot_path, author)
         if not post_data:
@@ -231,6 +234,15 @@ class DesktopXResearcher:
 
         content_id = f"x:{author}:{preview[:40]}"
         source_url = post_data.get("source_url", f"https://x.com/{author}")
+
+        # Step 4: 通过分享按钮获取帖子链接
+        console.print(f"      [cyan]复制帖子链接...[/cyan]")
+        post_url = await self._copy_post_url()
+        if post_url:
+            source_url = post_url
+        else:
+            # 兜底：从地址栏复制
+            source_url = await self._copy_url_from_address_bar() or source_url
 
         content = CollectedContent(
             content_id=content_id,
@@ -254,16 +266,16 @@ class DesktopXResearcher:
             f"💬{content.metrics.replies} 👁{content.metrics.views}[/dim]"
         )
 
-        # Step 3: 图片分析
+        # Step 5: 图片分析
         if post_data.get("has_image") and post_data.get("images"):
             console.print(f"      [cyan]检测到 {len(post_data['images'])} 张图片，分析...[/cyan]")
             await self._analyze_images(content, post_data["images"])
 
-        # Step 4: 读取评论
+        # Step 6: 读取评论
         console.print(f"      [cyan]读取评论...[/cyan]")
         content.comments = await self._read_comments()
 
-        # Step 5: 如果指标缺失，滚动查找
+        # Step 7: 如果指标缺失，滚动查找
         if not content.metrics.likes and not content.metrics.views:
             console.print(f"      [cyan]指标不可见，滚动查找...[/cyan]")
             await self._find_metrics(content)
@@ -613,6 +625,134 @@ class DesktopXResearcher:
             await asyncio.sleep(2)
         except Exception as e:
             logger.warning(f"返回失败: {e}")
+        return None
+
+    async def _focus_browser(self) -> None:
+        """聚焦浏览器窗口 — 先点击浏览器空白处确保后续点击有效。"""
+        from app.desktop.executor import execute_desktop
+        from app.schemas.action import ActionType, PlannedAction
+
+        console.print(f"      [dim]聚焦浏览器窗口...[/dim]")
+        try:
+            # 截图找浏览器内容区域
+            obs = await observe_desktop("定位浏览器窗口")
+            # 点击浏览器顶部地址栏区域（大致位置）确保聚焦
+            # 用 LLM 识别浏览器窗口的安全点击位置
+            raw = await vision_chat(
+                text_prompt=(
+                    "这是当前桌面截图。请识别浏览器（Safari）窗口的位置。\n"
+                    '返回 JSON: {"browser_x": 500, "browser_y": 130, "focused": true/false}\n'
+                    "browser_x, browser_y 是浏览器地址栏区域的一个安全点击坐标（归一化 1000x1000）。\n"
+                    "只返回 JSON。"
+                ),
+                image_path=obs.screenshot_path,
+                max_tokens=200,
+            )
+            try:
+                data = json.loads(_safe_extract_json(raw))
+                if isinstance(data, dict) and data.get("browser_x"):
+                    await execute_desktop(PlannedAction(
+                        action=ActionType.CLICK_AT,
+                        x=int(data["browser_x"]),
+                        y=int(data["browser_y"]),
+                        reason="聚焦浏览器窗口"
+                    ))
+                    await asyncio.sleep(0.5)
+                    console.print(f"      [green]已点击浏览器地址栏区域[/green]")
+                else:
+                    console.print(f"      [dim]无法识别浏览器坐标，跳过聚焦[/dim]")
+            except Exception:
+                # 兜底：点击屏幕中央偏上区域（通常是浏览器位置）
+                await execute_desktop(PlannedAction(
+                    action=ActionType.CLICK_AT,
+                    x=500, y=150,
+                    reason="聚焦浏览器（兜底点击屏幕中央）"
+                ))
+                await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.debug(f"浏览器聚焦失败: {e}")
+
+    async def _copy_post_url(self) -> str | None:
+        """通过分享按钮复制帖子链接：点击分享图标 → 点击"Copy link"。"""
+        from app.desktop.executor import execute_desktop
+        from app.schemas.action import ActionType, PlannedAction
+
+        obs = await observe_desktop("定位分享按钮")
+        try:
+            raw = await vision_chat(
+                text_prompt=(
+                    "这是 X 帖子详情页的截图。\n"
+                    "找到帖子底部的分享按钮（在评论、转发、点赞、收藏按钮右边），\n"
+                    "以及 'Copy link' 或 '复制链接' 菜单项。\n"
+                    '返回 JSON: {"share_button_x": 800, "share_button_y": 600, "copy_link_x": 700, "copy_link_y": 650}\n'
+                    "坐标归一化 1000x1000。如果找不到分享按钮，返回 null。\n"
+                    "只返回 JSON。"
+                ),
+                image_path=obs.screenshot_path,
+                max_tokens=200,
+            )
+            data = json.loads(_safe_extract_json(raw))
+            if isinstance(data, dict) and data.get("share_button_x"):
+                # 点击分享按钮
+                await execute_desktop(PlannedAction(
+                    action=ActionType.CLICK_AT,
+                    x=int(data["share_button_x"]),
+                    y=int(data["share_button_y"]),
+                    reason="点击分享按钮"
+                ))
+                await asyncio.sleep(0.5)
+
+                # 点击 Copy Link
+                if data.get("copy_link_x") and data.get("copy_link_y"):
+                    await execute_desktop(PlannedAction(
+                        action=ActionType.CLICK_AT,
+                        x=int(data["copy_link_x"]),
+                        y=int(data["copy_link_y"]),
+                        reason="点击 Copy Link"
+                    ))
+                    await asyncio.sleep(0.5)
+
+                # 从剪贴板获取 URL
+                import subprocess
+                pbpaste = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=3)
+                url = pbpaste.stdout.strip()
+                if url and ("x.com/" in url or "twitter.com/" in url):
+                    console.print(f"      [green]帖子链接: {url}[/green]")
+                    return url
+        except Exception as e:
+            logger.debug(f"复制帖子链接失败: {e}")
+        return None
+
+    async def _copy_url_from_address_bar(self) -> str | None:
+        """从地址栏复制 URL：Cmd+L 全选 → Cmd+C 复制。"""
+        from app.desktop.executor import execute_desktop
+        from app.schemas.action import ActionType, PlannedAction
+
+        try:
+            await execute_desktop(PlannedAction(
+                action=ActionType.HOTKEY, keys=["command", "l"],
+                reason="聚焦地址栏"
+            ))
+            await asyncio.sleep(0.3)
+            await execute_desktop(PlannedAction(
+                action=ActionType.HOTKEY, keys=["command", "c"],
+                reason="复制地址栏URL"
+            ))
+            await asyncio.sleep(0.3)
+
+            import subprocess
+            pbpaste = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=3)
+            url = pbpaste.stdout.strip()
+            if url and ("x.com/" in url or "twitter.com/" in url):
+                console.print(f"      [green]地址栏URL: {url}[/green]")
+                return url
+            # 恢复焦点（按 Escape 取消地址栏选中）
+            await execute_desktop(PlannedAction(
+                action=ActionType.HOTKEY, keys=["escape"],
+                reason="取消地址栏选中"
+            ))
+        except Exception as e:
+            logger.debug(f"地址栏复制URL失败: {e}")
         return None
 
     async def _sync_to_notion(self, content: CollectedContent) -> None:
