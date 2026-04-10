@@ -1,5 +1,5 @@
 """
-SightOps CLI  —  sightops <command>
+XAgent CLI  —  xagent <command>
 
 Commands:
   setup      初始化项目（首次使用）
@@ -35,8 +35,8 @@ from app.memory.sqlite_repo import (
 )
 
 cli = typer.Typer(
-    name="sightops",
-    help="SightOps — 全屏视觉 AI 调研 Agent",
+    name="xagent",
+    help="XAgent — X 平台视觉 AI 调研与操作 Agent",
     rich_markup_mode="rich",
     add_completion=False,
 )
@@ -83,7 +83,7 @@ def _banner(text: str, subtitle: str = "") -> None:
 @cli.command()
 def setup():
     """初始化项目 — 首次使用运行此命令。"""
-    _banner("SightOps 初始化", "全屏视觉 AI 调研 Agent v0.1.0")
+    _banner("XAgent 初始化", "X 平台视觉 AI 调研 Agent v0.1.0")
 
     s = get_settings()
 
@@ -150,7 +150,7 @@ def setup():
     summary.add_row("Notion", "已配置 ✓" if s.notion_token else "未配置")
     console.print(Panel(summary, title="[bold green]Setup 完成[/bold green]", border_style="green"))
     console.print("")
-    console.print("  [dim]下一步: [bold white]sightops research \"你的主题\"[/bold white][/dim]")
+    console.print("  [dim]下一步: [bold white]xagent research \"你的主题\"[/bold white][/dim]")
     console.print("")
 
 
@@ -308,7 +308,7 @@ async def _write_async(topic: str, post_type: str, days: int, platform: str):
     init_db()
     sources = load_recent_content(platform=platform, days=days)
     if not sources:
-        console.print(f"[{WARN}]没有调研内容。先运行 [bold]sightops research[/bold][/]")
+        console.print(f"[{WARN}]没有调研内容。先运行 [bold]xagent research[/bold][/]")
         return
 
     cfg = load_yaml("configs/app.yaml")
@@ -341,7 +341,7 @@ async def _write_async(topic: str, post_type: str, days: int, platform: str):
     preview = platform_draft.body[:300] + ("..." if len(platform_draft.body) > 300 else "")
     console.print(Panel(preview, title=f"[bold]{platform_draft.title}[/bold]", border_style=ACCENT))
     console.print("")
-    console.print(f"  [dim]发布: [bold white]sightops publish --id {platform_draft.draft_id[:12]}[/bold white][/dim]")
+    console.print(f"  [dim]发布: [bold white]xagent publish --id {platform_draft.draft_id[:12]}[/bold white][/dim]")
     console.print("")
 
 
@@ -390,7 +390,7 @@ async def _publish_async(draft_id: str, platform: str, skip_review: bool):
     init_db()
     drafts = load_pending_platform_drafts(platform=platform)
     if not drafts:
-        console.print(f"[{WARN}]没有待发布的 {platform.upper()} 草稿。先运行 sightops write[/]")
+        console.print(f"[{WARN}]没有待发布的 {platform.upper()} 草稿。先运行 xagent write[/]")
         return
 
     if draft_id:
@@ -433,7 +433,7 @@ def status():
     drafts = load_pending_platform_drafts()
     sources = load_recent_content(platform="x", days=30)
 
-    _banner("数据总览", "SightOps Research")
+    _banner("数据总览", "XAgent")
 
     # Overview
     overview = Table.grid(padding=(0, 2))

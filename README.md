@@ -1,8 +1,8 @@
-# SightOps
+# XAgent
 
-全屏视觉 AI 调研 Agent — 像真人一样操作你的 Mac，通过屏幕截图理解界面，用键鼠完成调研、写作、发布全流程。
+X 平台视觉 AI 操作 Agent — 像真人一样操作你的 Mac，通过屏幕截图理解界面，用键鼠完成调研、发推、互动全流程。
 
-**核心能力**：模型看截图 → 分析当前状态 → 决定下一步 → 执行键鼠 → 截图验证 → 循环。无硬编码导航序列，无 API 依赖，纯视觉闭环。
+**核心能力**：X API 搜索发现 → 高热度排序 → 视觉深度采集 → 发推互动。纯视觉闭环 + API 加速。
 
 **技术栈**：Qwen3.6-Plus（视觉）· X API v2（搜索发现）· PyAutoGUI（全局控制）· Notion API · SQLite · Rich CLI
 
@@ -15,16 +15,16 @@
 pip install -e .
 
 # 2. 初始化项目
-sightops setup
+xagent setup
 
 # 3. 编辑 .env，填入 LLM API Key
 #    LLM_API_KEY=sk-xxx
 
 # 4. 开始调研
-sightops research "AI agent"
+xagent research "AI agent"
 
 # 5. 查看状态
-sightops status
+xagent status
 ```
 
 > **系统授权**：系统设置 → 隐私与安全性 → 屏幕录制 + 辅助功能 → 启用终端 → 重启 Terminal
@@ -35,13 +35,13 @@ sightops status
 
 | 命令 | 说明 |
 |------|------|
-| `sightops setup` | 初始化项目（首次使用）— 检查 Python/配置/权限/数据库 |
-| `sightops research "主题"` | 全屏视觉调研 — 搜索 → 逐篇点开 → 正文/图片/评论/指标 → Notion 同步 |
-| `sightops analyze` | 爆款风格分析 — 对已采集内容做钩子/结构/叙事模式统计 |
-| `sightops write` | 根据调研生成草稿 — 提取风格 → 通用草稿 → 平台适配 |
-| `sightops publish` | 发布草稿到 X — 纯视觉操作 |
-| `sightops status` | 数据总览 — 采集统计 / 待发布草稿 / 内容排行榜 |
-| `sightops observe` | 实时屏幕观察器 — 全屏截图 + LLM 分析 |
+| `xagent setup` | 初始化项目（首次使用）— 检查 Python/配置/权限/数据库 |
+| `xagent research "主题"` | X 调研 — API 搜索 → 热度排序 → 逐一点开 → 正文/图片/评论/指标 → Notion 同步 |
+| `xagent analyze` | 爆款风格分析 — 对已采集内容做钩子/结构/叙事模式统计 |
+| `xagent write` | 根据调研生成草稿 — 提取风格 → 通用草稿 → 平台适配 |
+| `xagent publish` | 发布草稿到 X — 纯视觉操作 |
+| `xagent status` | 数据总览 — 采集统计 / 待发布草稿 / 内容排行榜 |
+| `xagent observe` | 实时屏幕观察器 — 全屏截图 + LLM 分析 |
 
 ---
 
@@ -50,7 +50,7 @@ sightops status
 ### Step 0 — 初始化
 
 ```bash
-sightops setup
+xagent setup
 ```
 
 自动完成：检查 Python 环境 → 验证 LLM 配置 → 创建目录结构 → 初始化 SQLite → 检查 macOS 权限。
@@ -59,10 +59,10 @@ sightops setup
 
 ```bash
 # 搜索关键词
-sightops research "AI agent" "vibe coding" --limit 20
+xagent research "AI agent" "vibe coding" --limit 20
 
 # 使用 topics.yaml 默认关键词
-sightops research
+xagent research
 ```
 
 **深度调研流程**：
@@ -99,10 +99,10 @@ API 搜索下一个主题
 
 ```bash
 # 分析最近 7 天的爆款风格
-sightops analyze
+xagent analyze
 
 # 分析最近 30 天
-sightops analyze --days 30
+xagent analyze --days 30
 ```
 
 统计热门开头类型、叙事结构模式、内容风格分布。
@@ -111,13 +111,13 @@ sightops analyze --days 30
 
 ```bash
 # 生成长文
-sightops write --type article --topic "AI Agent 趋势"
+xagent write --type article --topic "AI Agent 趋势"
 
 # 生成 Thread
-sightops write --type thread
+xagent write --type thread
 
 # 生成短帖
-sightops write --type short_post
+xagent write --type short_post
 ```
 
 流程：提取 Top K 来源风格 → 生成通用草稿 → 适配平台格式 → 预览保存。
@@ -126,10 +126,10 @@ sightops write --type short_post
 
 ```bash
 # 查看状态和草稿
-sightops status
+xagent status
 
 # 发布最新草稿
-sightops publish
+xagent publish
 ```
 
 ---
@@ -165,7 +165,7 @@ DESKTOP_MAX_CYCLES=20
 
 ### Notion 数据库设置
 
-1. 在 Notion 中创建一个数据库（或在 SightOps Research 页面中添加）
+1. 在 Notion 中创建一个数据库（或在 XAgent Research 页面中添加）
 2. 确保包含以下属性：`名称`（标题）、`Platform`（单选）、`URL`（链接）、`Relevance`（数字）、`Likes`（数字）、`Tags`（多选）、`Collected`（日期）、`Status`（单选）、`Author`（文本）、`Published URL`（链接）
 3. 将 Integration 分享到该数据库
 4. 将数据库 ID 填入 `.env`

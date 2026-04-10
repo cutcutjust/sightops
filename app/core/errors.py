@@ -1,33 +1,33 @@
-"""Custom exceptions for SightOps."""
+"""Custom exceptions for XAgent."""
 
 
-class SightOpsError(Exception):
+class XAgentError(Exception):
     """Base exception."""
 
 
-class BrowserError(SightOpsError):
+class BrowserError(XAgentError):
     """Browser / Playwright error."""
 
 
-class VisionError(SightOpsError):
+class VisionError(XAgentError):
     """LLM vision or action planning error."""
 
 
-class ActionFailed(SightOpsError):
+class ActionFailed(XAgentError):
     """An action was executed but produced an unexpected result."""
 
 
-class ExtractionError(SightOpsError):
+class ExtractionError(XAgentError):
     """Failed to extract content from a page."""
 
 
-class PublishError(SightOpsError):
+class PublishError(XAgentError):
     """Publishing failed or was rejected."""
 
 
-class NotionError(SightOpsError):
+class NotionError(XAgentError):
     """Notion API error."""
 
 
-class HumanReviewRequired(SightOpsError):
+class HumanReviewRequired(XAgentError):
     """Workflow paused — human must review before continuing."""

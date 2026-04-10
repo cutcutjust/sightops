@@ -1,1 +1,1 @@
-"""Desktop automation primitives for SightOps research agent."""
+"""Desktop automation primitives for XAgent."""

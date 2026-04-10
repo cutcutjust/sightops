@@ -18,7 +18,7 @@ def setup_logger() -> None:
     log_dir = settings.data_path / "runs"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.add(
-        log_dir / "sightops_{time:YYYY-MM-DD}.log",
+        log_dir / "xagent_{time:YYYY-MM-DD}.log",
         level="DEBUG",
         rotation="1 day",
         retention="14 days",

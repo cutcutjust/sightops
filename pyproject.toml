@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sightops"
+name = "xagent"
 version = "0.1.0"
 description = "全屏视觉 AI 调研 Agent — 像真人一样操作电脑"
 requires-python = ">=3.11"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sightops = "app.cli.app:cli"
+xagent = "app.cli.app:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

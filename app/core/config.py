@@ -9,7 +9,7 @@ import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ROOT = Path(__file__).parent.parent.parent  # sightops/
+ROOT = Path(__file__).parent.parent.parent  # xagent/
 
 
 class Settings(BaseSettings):

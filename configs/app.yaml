@@ -1,5 +1,5 @@
 app:
-  name: SightOps
+  name: XAgent
   version: "0.1.0"
   data_dir: "./data"
 

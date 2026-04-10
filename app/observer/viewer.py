@@ -13,7 +13,7 @@ import webview
 
 from app.llm.client import _sync_vision_chat
 
-_tmp_dir = Path(tempfile.gettempdir()) / "sightops_observer"
+_tmp_dir = Path(tempfile.gettempdir()) / "xagent_observer"
 _tmp_dir.mkdir(exist_ok=True)
 
 # Log entries accumulated for display
@@ -132,7 +132,7 @@ body{font-family:-apple-system,"PingFang SC",monospace;background:#0a0a0f;color:
 ::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 </style></head><body>
 <div class="hdr">
-  <h1>SightOps 观察器</h1>
+  <h1>XAgent 观察器</h1>
   <span class="st" id="st">● 启动中...</span>
   <span class="badge" id="bg">0</span>
 </div>
@@ -182,7 +182,7 @@ def start_viewer(interval: float = 10.0):
         threading.Timer(1.0, set_running).start()
 
     window = webview.create_window(
-        title="SightOps — 屏幕观察器",
+        title="XAgent — 屏幕观察器",
         html=HTML_PAGE,
         width=550,
         height=850,

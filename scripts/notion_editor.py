@@ -95,7 +95,7 @@ async def create_new_research_db():
 
             db = await client.databases.create(
                 parent={"type": "page_id", "page_id": page_id},
-                title=[{"type": "text", "text": {"content": "SightOps Research"}}],
+                title=[{"type": "text", "text": {"content": "XAgent Research"}}],
                 properties=REQUIRED_PROPS,
             )
             print(f"\n新数据库创建成功: {db['id']}")

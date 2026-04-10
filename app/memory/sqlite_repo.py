@@ -18,7 +18,7 @@ def _db_path() -> Path:
     s = get_settings()
     p = s.data_path / "cache"
     p.mkdir(parents=True, exist_ok=True)
-    return p / "sightops.db"
+    return p / "xagent.db"
 
 
 @contextmanager
